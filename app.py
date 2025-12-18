@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 
 st.set_page_config(page_title="NFL WR YPRR Matchup Model", layout="wide")
-st.title("NFL WR YPRR Matchup Model (Current Season Only)")
+st.title("NFL WR YPRR Matchup Model (Current Season, Simplified)")
 
 # ------------------------
 # Upload Data
@@ -44,37 +44,42 @@ def sample_size_penalty(routes, league_lead, scale):
         return 1.0
     return max(0, (pct / 0.75) * scale)
 
-def coverage_multiplier(yprr_split, base_yprr, routes_split, league_lead, coverage_weight):
-    raw = yprr_split / base_yprr
-    penalty = sample_size_penalty(routes_split, league_lead, 1.0)
-    return raw * penalty * coverage_weight
-
 def compute_model(wr_df, defense, league_lead, sample_scaling, coverage_weight):
 
     results = []
 
     for _, row in wr_df.iterrows():
 
+        # Overall sample size penalty
         sample_pen = sample_size_penalty(
             row["routes_played"],
             league_lead,
             sample_scaling
         )
 
-        man = coverage_multiplier(row["yprr_man"], row["base_yprr"], row["routes_man"], league_lead, coverage_weight)
-        zone = coverage_multiplier(row["yprr_zone"], row["base_yprr"], row["routes_zone"], league_lead, coverage_weight)
-        onehigh = coverage_multiplier(row["yprr_1high"], row["base_yprr"], row["routes_1high"], league_lead, coverage_weight)
-        twohigh = coverage_multiplier(row["yprr_2high"], row["base_yprr"], row["routes_2high"], league_lead, coverage_weight)
-        blitz = coverage_multiplier(row["yprr_blitz"], row["base_yprr"], row["routes_blitz"], league_lead, coverage_weight)
-        standard = coverage_multiplier(row["yprr_standard"], row["base_yprr"], row["routes_standard"], league_lead, coverage_weight)
+        # ---- MAN / ZONE (NO ROUTE WEIGHTING) ----
+        man_mult = row["yprr_man"] / row["base_yprr"]
+        zone_mult = row["yprr_zone"] / row["base_yprr"]
 
+        # ---- SAFETY & BLITZ (OPTIONAL ROUTE PENALTY) ----
+        onehigh_mult = (row["yprr_1high"] / row["base_yprr"])
+        twohigh_mult = (row["yprr_2high"] / row["base_yprr"])
+        blitz_mult = (row["yprr_blitz"] / row["base_yprr"])
+        standard_mult = (row["yprr_standard"] / row["base_yprr"])
+
+        # ---- COVERAGE FACTOR ----
         coverage_factor = (
-            defense["man_pct"] * man + defense["zone_pct"] * zone
+            defense["man_pct"] * man_mult
+            + defense["zone_pct"] * zone_mult
         ) * (
-            defense["onehigh_pct"] * onehigh + defense["twohigh_pct"] * twohigh
+            defense["onehigh_pct"] * onehigh_mult
+            + defense["twohigh_pct"] * twohigh_mult
         ) * (
-            defense["blitz_pct"] * blitz + defense["noblitz_pct"] * standard
+            defense["blitz_pct"] * blitz_mult
+            + defense["noblitz_pct"] * standard_mult
         )
+
+        coverage_factor *= coverage_weight
 
         adjusted_yprr = (
             row["base_yprr"]
@@ -98,6 +103,7 @@ def compute_model(wr_df, defense, league_lead, sample_scaling, coverage_weight):
     df["edge_vs_league"] = df["adjusted_yprr"] - league_avg
 
     df["rank"] = df["adjusted_yprr"].rank(ascending=False, method="min").astype(int)
+
     return df.sort_values("rank")
 
 # ------------------------
@@ -107,12 +113,6 @@ if wr_file is not None and def_file is not None:
 
     wr_df = pd.read_csv(wr_file)
     defense = pd.read_csv(def_file).iloc[0].to_dict()
-
-    # Create coverage route columns if missing
-    for c in ["man", "zone", "1high", "2high", "blitz", "standard"]:
-        col = f"routes_{c}"
-        if col not in wr_df.columns:
-            wr_df[col] = wr_df["routes_played"] * 0.5
 
     results = compute_model(
         wr_df,
