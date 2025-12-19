@@ -133,7 +133,8 @@ def compute_model(
     if qualified_toggle:
         df = df[df["Route Share"] >= 0.35]
 
-    df = df.sort_values("Edge", ascending=False)
+    # Sort by absolute value of edge (furthest from zero first)
+    df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rank"] = range(1, len(df) + 1)
 
     return df
