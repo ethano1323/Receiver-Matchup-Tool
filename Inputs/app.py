@@ -5,8 +5,8 @@ import numpy as np
 # ------------------------
 # Page Setup
 # ------------------------
-st.set_page_config(page_title="NFL WR Matchup Model", layout="wide")
-st.title("NFL WR Coverage + Blitz Matchup Model (Current Season Only)")
+st.set_page_config(page_title="NFL Receiver Matchup Model", layout="wide")
+st.title("Receiver Matchup Weekly Model")
 
 # ------------------------
 # Default Data Paths
