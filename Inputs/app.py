@@ -253,24 +253,22 @@ fades = results[
     (results["Route Share"] >= min_routes)
 ].sort_values("Edge")  # ascending for worst fade first
 
-st.subheader("Targets (Best Matchups)")
+st.subheader("Targets")
 st.info(
     f"Targets must have:\n"
     f"• Edge ≥ +{min_edge}\n"
     f"• ≥ {int(min_routes*100)}% of league-lead routes\n"
-    f"• Adjusted YPRR reflects coverage + safety + blitz"
 )
 if not targets.empty:
     st.dataframe(targets[display_cols].style.applymap(color_edge, subset=["Edge"]).format(number_format))
 else:
     st.write("No players meet the target criteria this week.")
 
-st.subheader("Fades (Worst Matchups)")
+st.subheader("Fades")
 st.info(
     f"Fades must have:\n"
     f"• Edge ≤ -{min_edge}\n"
     f"• ≥ {int(min_routes*100)}% of league-lead routes\n"
-    f"• Blitz exposure contributes to downside"
 )
 if not fades.empty:
     st.dataframe(fades[display_cols].style.applymap(color_edge, subset=["Edge"]).format(number_format))
