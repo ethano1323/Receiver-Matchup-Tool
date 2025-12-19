@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from st_aggrid import AgGrid, GridOptionsBuilder
 
 # ------------------------
 # Page Setup
@@ -59,7 +58,7 @@ def compute_model(
         twohigh_ratio = row["yprr_2high"] / base
         zerohigh_ratio = row["yprr_0high"] / base
 
-        # ---- Blitz ratio (mandatory, neutral fallback) ----
+        # ---- Blitz ratio ----
         blitz_ratio = row.get("yprr_blitz", np.nan)
         if pd.isna(blitz_ratio):
             blitz_ratio = 1.0
@@ -193,7 +192,6 @@ if wr_file and def_file and matchup_file and blitz_file:
         st.warning("No players available after filtering.")
         st.stop()
 
-    # ---- Column order and tooltips ----
     display_cols = [
         "Rank",
         "Player",
@@ -205,23 +203,8 @@ if wr_file and def_file and matchup_file and blitz_file:
         "Edge"
     ]
 
-    tooltips = {
-        "Rank": "Overall rank by Edge",
-        "Player": "Wide Receiver name",
-        "Team": "Player's team",
-        "Opponent": "Opponent team this week",
-        "Route Share": "Proportion of league-lead routes played",
-        "Base YPRR": "Player's base YPRR for the season",
-        "Adjusted YPRR": "YPRR adjusted for coverage, safety, and blitz",
-        "Edge": "Matchup advantage/disadvantage (positive = good, negative = bad)"
-    }
-
     st.subheader("WR Matchup Rankings")
-    gb = GridOptionsBuilder.from_dataframe(results[display_cols])
-    gb.configure_columns(list(tooltips.keys()), tooltip=tooltips)
-    gb.configure_default_column(flex=1, min_width=100)
-    grid_options = gb.build()
-    AgGrid(results[display_cols], gridOptions=grid_options, height=400)
+    st.dataframe(results[display_cols].reset_index(drop=True))
 
     # ---- Targets & Fades ----
     min_edge = 7.5
@@ -245,7 +228,7 @@ if wr_file and def_file and matchup_file and blitz_file:
         f"• Adjusted YPRR reflects coverage + safety + blitz"
     )
     if not targets.empty:
-        AgGrid(targets[display_cols], gridOptions=grid_options, height=300)
+        st.dataframe(targets[display_cols].reset_index(drop=True))
     else:
         st.write("No players meet the target criteria this week.")
 
@@ -257,13 +240,12 @@ if wr_file and def_file and matchup_file and blitz_file:
         f"• Blitz exposure contributes to downside"
     )
     if not fades.empty:
-        AgGrid(fades[display_cols], gridOptions=grid_options, height=300)
+        st.dataframe(fades[display_cols].reset_index(drop=True))
     else:
         st.write("No players meet the fade criteria this week.")
 
 else:
     st.info("Upload WR, Defense, Matchup, and Blitz CSV files to begin.")
-
 
 
 
