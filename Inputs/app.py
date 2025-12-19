@@ -12,7 +12,7 @@ st.title("NFL WR Coverage Matchup Model (Current Season Only)")
 # ------------------------
 # Default Data Paths
 # ------------------------
-BASE_DIR = os.path.dirname(__file__)  # Folder where app.py is located
+BASE_DIR = os.path.dirname(__file__)
 DEFAULT_WR_PATH = os.path.join(BASE_DIR, "data", "standard_wr_data.csv")
 DEFAULT_DEF_PATH = os.path.join(BASE_DIR, "data", "standard_def_data.csv")
 DEFAULT_MATCHUP_PATH = os.path.join(BASE_DIR, "data", "standard_matchup_data.csv")
@@ -79,7 +79,7 @@ def compute_model(
         onehigh_ratio = row["yprr_1high"] / base
         twohigh_ratio = row["yprr_2high"] / base
         zerohigh_ratio = row["yprr_0high"] / base
-        blitz_ratio = row["yprr_blitz"] / base
+        blitz_ratio = row["yprr_blitz"] / base  # already filled with base_yprr if missing
 
         # ---- Coverage weighting ----
         coverage_component = (
@@ -153,93 +153,96 @@ def compute_model(
 # ------------------------
 # Run App
 # ------------------------
-if True:  # always run
-    wr_df = load_csv(wr_file, DEFAULT_WR_PATH, "WR Data")
-    def_df_raw = load_csv(def_file, DEFAULT_DEF_PATH, "Defense Data")
-    matchup_df = load_csv(matchup_file, DEFAULT_MATCHUP_PATH, "Matchup Data")
-    blitz_df = load_csv(blitz_file, DEFAULT_BLITZ_PATH, "Blitz Data")
+wr_df = load_csv(wr_file, DEFAULT_WR_PATH, "WR Data")
+def_df_raw = load_csv(def_file, DEFAULT_DEF_PATH, "Defense Data")
+matchup_df = load_csv(matchup_file, DEFAULT_MATCHUP_PATH, "Matchup Data")
+blitz_df = load_csv(blitz_file, DEFAULT_BLITZ_PATH, "Blitz Data")
 
-    # Detect defense index column
-    for col in ["team", "defense", "def_team", "abbr"]:
-        if col in def_df_raw.columns:
-            def_df = def_df_raw.set_index(col)
-            break
+# Detect defense index column
+for col in ["team", "defense", "def_team", "abbr"]:
+    if col in def_df_raw.columns:
+        def_df = def_df_raw.set_index(col)
+        break
+else:
+    st.error("Defense CSV must include a team column.")
+    st.stop()
+
+# Convert percentages
+for col in ["man_pct", "zone_pct", "onehigh_pct", "twohigh_pct", "zerohigh_pct", "blitz_pct"]:
+    if col in def_df.columns:
+        def_df[col] = def_df[col] / 100.0
     else:
-        st.error("Defense CSV must include a team column.")
-        st.stop()
+        def_df[col] = 0.0  # fill missing columns with 0
 
-    # Convert percentages
-    for col in ["man_pct", "zone_pct", "onehigh_pct", "twohigh_pct", "zerohigh_pct", "blitz_pct"]:
-        if col in def_df.columns:
-            def_df[col] = def_df[col] / 100.0
-        else:
-            def_df[col] = 0.0  # fill missing columns with 0
+# Merge matchups
+wr_df = wr_df.merge(matchup_df, on="team", how="left")
+wr_df = wr_df.merge(blitz_df, on="player", how="left")
 
-    # Merge matchups
-    wr_df = wr_df.merge(matchup_df, on="team", how="left")
-    wr_df = wr_df.merge(blitz_df, on="player", how="left")  # Blitz data per player
+# Fill missing blitz with base_yprr
+if "yprr_blitz" in wr_df.columns:
+    wr_df["yprr_blitz"] = wr_df["yprr_blitz"].fillna(wr_df["base_yprr"])
+else:
+    wr_df["yprr_blitz"] = wr_df["base_yprr"]
 
-    results = compute_model(wr_df, def_df)
+results = compute_model(wr_df, def_df)
 
-    if results.empty:
-        st.warning("No players available after filtering.")
-        st.stop()
+if results.empty:
+    st.warning("No players available after filtering.")
+    st.stop()
 
-    # ---- Column order ----
-    display_cols = [
-        "rank",
-        "player",
-        "team",
-        "opponent",
-        "route_share",
-        "base_yprr",
-        "adjusted_yprr",
-        "edge"
-    ]
+# ---- Column order ----
+display_cols = [
+    "rank",
+    "player",
+    "team",
+    "opponent",
+    "route_share",
+    "base_yprr",
+    "adjusted_yprr",
+    "edge"
+]
 
-    st.subheader("WR Matchup Rankings")
-    st.info("Players are sorted by how far their edge is from 0 (largest positive or negative matchups at the top).")
-    st.dataframe(results[display_cols])
+st.subheader("WR Matchup Rankings")
+st.info("Players are sorted by how far their edge is from 0 (largest positive or negative matchups at the top).")
+st.dataframe(results[display_cols])
 
-    # ---- Targets & Fades ----
-    min_edge = 7.5
-    min_routes = 0.40
+# ---- Targets & Fades ----
+min_edge = 7.5
+min_routes = 0.40
 
-    targets = results[
-        (results["edge"] >= min_edge) &
-        (results["route_share"] >= min_routes)
-    ]
+targets = results[
+    (results["edge"] >= min_edge) &
+    (results["route_share"] >= min_routes)
+]
 
-    fades = results[
-        (results["edge"] <= -min_edge) &
-        (results["route_share"] >= min_routes)
-    ].sort_values("rank", ascending=True)
+fades = results[
+    (results["edge"] <= -min_edge) &
+    (results["route_share"] >= min_routes)
+].sort_values("rank", ascending=True)
 
-    st.subheader("Targets (Best Matchups)")
-    st.info(
-        "Targets: Edge ≥ +7.5 and ≥ 40% of league-lead routes"
-    )
-    if not targets.empty:
-        st.dataframe(targets[display_cols])
-    else:
-        st.write("No players meet the target criteria this week.")
+st.subheader("Targets (Best Matchups)")
+st.info(
+    "Targets: Edge ≥ +7.5 and ≥ 40% of league-lead routes"
+)
+if not targets.empty:
+    st.dataframe(targets[display_cols])
+else:
+    st.write("No players meet the target criteria this week.")
 
-    st.subheader("Fades (Worst Matchups)")
-    st.info(
-        "Fades: Edge ≤ -7.5 and ≥ 40% of league-lead routes"
-    )
-    if not fades.empty:
-        st.dataframe(fades[display_cols])
-    else:
-        st.write("No players meet the fade criteria this week.")
+st.subheader("Fades (Worst Matchups)")
+st.info(
+    "Fades: Edge ≤ -7.5 and ≥ 40% of league-lead routes"
+)
+if not fades.empty:
+    st.dataframe(fades[display_cols])
+else:
+    st.write("No players meet the fade criteria this week.")
 
-    # ---- Info Section ----
-    st.subheader("Stats Description")
-    st.markdown("""
-    - **Base YPRR**: Player's Yards per Route Run.
-    - **Adjusted YPRR**: YPRR adjusted for opponent's coverage tendencies and blitz.
-    - **Edge**: Percentage difference between adjusted YPRR and base YPRR, scaled to show positive and negative matchups.
-    - **Route Share**: Player's routes run relative to the league leader.
-    """)
-
-
+# ---- Info Section ----
+st.subheader("Stats Description")
+st.markdown("""
+- **Base YPRR**: Player's Yards per Route Run.
+- **Adjusted YPRR**: YPRR adjusted for opponent's coverage tendencies and blitz.
+- **Edge**: Percentage difference between adjusted YPRR and base YPRR, scaled to show positive and negative matchups.
+- **Route Share**: Player's routes run relative to the league leader.
+""")
