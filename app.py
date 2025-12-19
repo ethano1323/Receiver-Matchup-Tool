@@ -59,10 +59,11 @@ def compute_model(
         zerohigh_ratio = row["yprr_0high"] / base
 
         # ---- Blitz ratio (mandatory, neutral fallback) ----
-        if pd.isna(row["yprr_blitz"]):
+        blitz_ratio = row.get("yprr_blitz", np.nan)
+        if pd.isna(blitz_ratio):
             blitz_ratio = 1.0
         else:
-            blitz_ratio = row["yprr_blitz"] / base
+            blitz_ratio = blitz_ratio / base
 
         # ---- Coverage weighting ----
         coverage_component = (
@@ -147,26 +148,21 @@ if wr_file and def_file and matchup_file and blitz_file:
     matchup_df = pd.read_csv(matchup_file)
     blitz_df = pd.read_csv(blitz_file)
 
-    # ---- Normalize names for blitz merge ----
+    # ---- Normalize player names for merging ----
     def normalize_name(name):
-        return (
-            str(name).lower()
-            .replace(".", "")
-            .replace(" jr", "")
-            .replace(" iii", "")
-            .strip()
-        )
+        return str(name).lower().replace(".", "").replace(" jr", "").replace(" iii", "").strip()
 
     wr_df["player_norm"] = wr_df["player"].apply(normalize_name)
     blitz_df["player_norm"] = blitz_df["player"].apply(normalize_name)
 
+    # ---- Merge blitz data safely ----
     wr_df = wr_df.merge(
         blitz_df[["player_norm", "yprr_blitz"]],
         on="player_norm",
         how="left"
     )
 
-    # Detect defense index column
+    # ---- Detect defense index column ----
     for col in ["team", "defense", "def_team", "abbr"]:
         if col in def_df_raw.columns:
             def_df = def_df_raw.set_index(col)
@@ -175,15 +171,19 @@ if wr_file and def_file and matchup_file and blitz_file:
         st.error("Defense CSV must include a team column.")
         st.stop()
 
-    # Convert percentages
-    for col in [
+    # ---- Convert percentages ----
+    required_cols = [
         "man_pct", "zone_pct",
         "onehigh_pct", "twohigh_pct", "zerohigh_pct",
         "blitz_pct"
-    ]:
+    ]
+    for col in required_cols:
+        if col not in def_df.columns:
+            st.error(f"Missing required defense column: {col}")
+            st.stop()
         def_df[col] = def_df[col] / 100.0
 
-    # Merge matchups
+    # ---- Merge matchups ----
     wr_df = wr_df.merge(matchup_df, on="team", how="left")
 
     results = compute_model(wr_df, def_df)
@@ -227,7 +227,6 @@ if wr_file and def_file and matchup_file and blitz_file:
         "• ≥ 50% of league-lead routes\n"
         "• Adjusted YPRR reflects coverage + safety + blitz"
     )
-
     if not targets.empty:
         st.dataframe(targets[display_cols].reset_index(drop=True), hide_index=True)
     else:
@@ -240,7 +239,6 @@ if wr_file and def_file and matchup_file and blitz_file:
         "• ≥ 50% of league-lead routes\n"
         "• Blitz exposure contributes to downside"
     )
-
     if not fades.empty:
         st.dataframe(fades[display_cols].reset_index(drop=True), hide_index=True)
     else:
