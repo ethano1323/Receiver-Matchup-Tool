@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
 
 # ------------------------
 # Page Setup
@@ -12,11 +11,10 @@ st.title("NFL WR Coverage + Blitz Matchup Model (Current Season Only)")
 # ------------------------
 # Default Data Paths
 # ------------------------
-BASE_DIR = os.path.dirname(__file__)
-DEFAULT_WR_PATH = os.path.join(BASE_DIR, "data", "standard_wr_data.csv")
-DEFAULT_DEF_PATH = os.path.join(BASE_DIR, "data", "standard_def_data.csv")
-DEFAULT_MATCHUP_PATH = os.path.join(BASE_DIR, "data", "standard_matchup_data.csv")
-DEFAULT_BLITZ_PATH = os.path.join(BASE_DIR, "data", "standard_blitz_data.csv")
+DEFAULT_WR_PATH = "data/standard_wr_data.csv"
+DEFAULT_DEF_PATH = "data/standard_def_data.csv"
+DEFAULT_MATCHUP_PATH = "data/standard_matchup_data.csv"
+DEFAULT_BLITZ_PATH = "data/standard_blitz_data.csv"
 
 # ------------------------
 # Upload Data (Optional Overrides)
@@ -200,14 +198,6 @@ def compute_model(
     return df
 
 # ------------------------
-# Load CSVs
-# ------------------------
-wr_df = load_csv(wr_file, DEFAULT_WR_PATH, "WR Data")
-def_df_raw = load_csv(def_file, DEFAULT_DEF_PATH, "Defense Data")
-matchup_df = load_csv(matchup_file, DEFAULT_MATCHUP_PATH, "Matchup Data")
-blitz_df = load_csv(blitz_file, DEFAULT_BLITZ_PATH, "Blitz Data")
-
-# ------------------------
 # Edge color function
 # ------------------------
 def color_edge(val):
@@ -300,5 +290,4 @@ st.markdown(
     **Edge:** Percentage difference between Adjusted YPRR and Base YPRR (after route-share penalty for edge)  
     """
 )
-
 
