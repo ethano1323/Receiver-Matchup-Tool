@@ -16,19 +16,24 @@ wr_file = st.sidebar.file_uploader("WR Data CSV", type="csv")
 def_file = st.sidebar.file_uploader("Defense Tendencies CSV", type="csv")
 matchup_file = st.sidebar.file_uploader("Weekly Matchups CSV", type="csv")
 
+# Toggle for qualified players
+qualified_toggle = st.sidebar.checkbox("Show only qualified players (≥35% league lead routes)")
+
 # ------------------------
 # Core Model
 # ------------------------
-def compute_model(wr_df, def_df):
+def compute_model(wr_df, def_df, max_penalty=0.8):
 
+    league_lead_routes = wr_df["routes_played"].max()
     results = []
 
     for _, row in wr_df.iterrows():
 
         base = row["base_yprr"]
+        routes = row["routes_played"]
 
         # ---- Filters ----
-        if base < 0.4 or row["routes_played"] <= 0:
+        if base < 0.4 or routes <= 0:
             continue
 
         opp = row["opponent"]
@@ -37,6 +42,9 @@ def compute_model(wr_df, def_df):
 
         defense = def_df.loc[opp]
 
+        # ---- Route share ----
+        route_share = routes / league_lead_routes
+
         # ---- Normalize splits vs baseline ----
         man_ratio = row["yprr_man"] / base
         zone_ratio = row["yprr_zone"] / base
@@ -44,28 +52,29 @@ def compute_model(wr_df, def_df):
         twohigh_ratio = row["yprr_2high"] / base
 
         # ---- Weighted matchup components ----
-        coverage_component = (
-            defense["man_pct"] * man_ratio
-            + defense["zone_pct"] * zone_ratio
-        )
+        coverage_component = defense["man_pct"] * man_ratio + defense["zone_pct"] * zone_ratio
+        safety_component = defense["onehigh_pct"] * onehigh_ratio + defense["twohigh_pct"] * twohigh_ratio
 
-        safety_component = (
-            defense["onehigh_pct"] * onehigh_ratio
-            + defense["twohigh_pct"] * twohigh_ratio
-        )
-
-        # ---- FINAL EXPECTED RATIO (AVERAGE, NOT MULTIPLY) ----
+        # ---- Expected ratio (average of coverage + safety) ----
         expected_ratio = (coverage_component + safety_component) / 2
 
-        # ---- Adjusted YPRR ----
+        # ---- Adjusted YPRR (untouched by route share penalty) ----
         adjusted_yprr = base * expected_ratio
 
-        # ---- Relative edge ----
+        # ---- Raw edge (-25% to +25%) ----
         raw_edge = (adjusted_yprr - base) / base
         raw_edge = np.clip(raw_edge, -0.25, 0.25)
-
-        # ---- Edge score (-100 to +100) ----
         edge_score = (raw_edge / 0.25) * 100
+
+        # ---- Route share / sample size penalty applied only to edge ----
+        if route_share >= 0.85:
+            penalty_factor = 0
+        elif route_share <= 0.15:
+            penalty_factor = max_penalty
+        else:
+            penalty_factor = max_penalty * (0.85 - route_share) / (0.85 - 0.15)
+
+        edge_score *= (1 - penalty_factor)
 
         results.append({
             "player": row["player"],
@@ -74,13 +83,17 @@ def compute_model(wr_df, def_df):
             "base_yprr": round(base, 2),
             "adjusted_yprr": round(adjusted_yprr, 2),
             "edge": round(edge_score, 1),
-            "raw_edge_pct": round(raw_edge * 100, 1)
+            "route_share": round(route_share, 3)
         })
 
     df = pd.DataFrame(results)
 
     if df.empty:
         return df
+
+    # ---- Filter for qualified players if toggle is enabled ----
+    if qualified_toggle:
+        df = df[df["route_share"] >= 0.35]
 
     df["rank"] = df["edge"].rank(ascending=False).astype(int)
     return df.sort_values("rank")
@@ -117,9 +130,7 @@ if wr_file and def_file and matchup_file:
     # ---- Debug missing defenses ----
     missing_defs = set(wr_df["opponent"].dropna()) - set(def_df.index)
     if missing_defs:
-        st.warning(
-            f"Missing defense data for: {', '.join(sorted(missing_defs))}"
-        )
+        st.warning(f"Missing defense data for: {', '.join(sorted(missing_defs))}")
 
     # ---- Run model ----
     results = compute_model(wr_df, def_df)
