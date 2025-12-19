@@ -139,6 +139,23 @@ def compute_model(
     return df
 
 # ------------------------
+# Color-coding function for Edge
+# ------------------------
+def color_edge(val):
+    if val > 20:
+        return "color: darkgreen; font-weight: bold"
+    elif 7.5 < val <= 20:
+        return "color: green; font-weight: bold"
+    elif 0 < val <= 7.5:
+        return "color: lightgreen; font-weight: bold"
+    elif -7.5 < val <= 0:
+        return "color: lightcoral; font-weight: bold"
+    elif -20 < val <= -7.5:
+        return "color: red; font-weight: bold"
+    else:  # val <= -20
+        return "color: darkred; font-weight: bold"
+
+# ------------------------
 # Run App
 # ------------------------
 if wr_file and def_file and matchup_file and blitz_file:
@@ -204,7 +221,7 @@ if wr_file and def_file and matchup_file and blitz_file:
     ]
 
     st.subheader("WR Matchup Rankings")
-    st.dataframe(results[display_cols].reset_index(drop=True))
+    st.dataframe(results[display_cols].style.applymap(color_edge, subset=["Edge"]))
 
     # ---- Targets & Fades ----
     min_edge = 7.5
@@ -218,7 +235,7 @@ if wr_file and def_file and matchup_file and blitz_file:
     fades = results[
         (results["Edge"] <= -min_edge) &
         (results["Route Share"] >= min_routes)
-    ].sort_values("Edge")  # <-- Sorted ascending for worst fade first
+    ].sort_values("Edge")  # Sorted ascending for worst fade first
 
     st.subheader("Targets (Best Matchups)")
     st.info(
@@ -228,7 +245,7 @@ if wr_file and def_file and matchup_file and blitz_file:
         f"• Adjusted YPRR reflects coverage + safety + blitz"
     )
     if not targets.empty:
-        st.dataframe(targets[display_cols].reset_index(drop=True))
+        st.dataframe(targets[display_cols].style.applymap(color_edge, subset=["Edge"]))
     else:
         st.write("No players meet the target criteria this week.")
 
@@ -240,7 +257,7 @@ if wr_file and def_file and matchup_file and blitz_file:
         f"• Blitz exposure contributes to downside"
     )
     if not fades.empty:
-        st.dataframe(fades[display_cols].reset_index(drop=True))
+        st.dataframe(fades[display_cols].style.applymap(color_edge, subset=["Edge"]))
     else:
         st.write("No players meet the fade criteria this week.")
 
