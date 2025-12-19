@@ -28,10 +28,8 @@ def compute_model(wr_df, def_df):
 
         base = row["base_yprr"]
 
-        # ---- Hard filters ----
-        if base < 0.2:
-            continue
-        if row["routes_played"] <= 0:
+        # ---- Filters ----
+        if base < 0.2 or row["routes_played"] <= 0:
             continue
 
         opp = row["opponent"]
@@ -40,34 +38,34 @@ def compute_model(wr_df, def_df):
 
         defense = def_df.loc[opp]
 
-        # ---- Normalize WR splits vs base ----
+        # ---- Normalize splits vs baseline ----
         man_ratio = row["yprr_man"] / base
         zone_ratio = row["yprr_zone"] / base
         onehigh_ratio = row["yprr_1high"] / base
         twohigh_ratio = row["yprr_2high"] / base
 
-        # ---- Opponent-weighted coverage matchup ----
-        coverage_ratio = (
+        # ---- Weighted matchup components ----
+        coverage_component = (
             defense["man_pct"] * man_ratio
             + defense["zone_pct"] * zone_ratio
         )
 
-        safety_ratio = (
+        safety_component = (
             defense["onehigh_pct"] * onehigh_ratio
             + defense["twohigh_pct"] * twohigh_ratio
         )
 
-        # ---- Expected matchup ratio ----
-        expected_ratio = coverage_ratio * safety_ratio
+        # ---- FINAL EXPECTED RATIO (AVERAGE, NOT MULTIPLY) ----
+        expected_ratio = (coverage_component + safety_component) / 2
 
         # ---- Adjusted YPRR ----
         adjusted_yprr = base * expected_ratio
 
-        # ---- Relative edge (bounded) ----
+        # ---- Relative edge ----
         raw_edge = (adjusted_yprr - base) / base
         raw_edge = np.clip(raw_edge, -0.25, 0.25)
 
-        # ---- Edge score: -100 to +100 ----
+        # ---- Edge score (-100 to +100) ----
         edge_score = (raw_edge / 0.25) * 100
 
         results.append({
@@ -97,31 +95,17 @@ if wr_file and def_file and matchup_file:
     def_df_raw = pd.read_csv(def_file)
     matchup_df = pd.read_csv(matchup_file)
 
-    # ---- Identify defense team column safely ----
-    team_col = None
+    # ---- Detect defense team column ----
     for col in ["team", "defense", "def_team", "abbr"]:
         if col in def_df_raw.columns:
-            team_col = col
+            def_df = def_df_raw.set_index(col)
             break
-
-    if team_col is None:
-        st.error(
-            "Defense CSV must contain a team column "
-            "(e.g. 'team', 'defense', 'def_team', or 'abbr')."
-        )
+    else:
+        st.error("Defense CSV must contain a team column.")
         st.stop()
-
-    def_df = def_df_raw.set_index(team_col)
 
     # ---- Merge weekly matchups ----
     wr_df = wr_df.merge(matchup_df, on="team", how="left")
-
-    # ---- Debug missing defenses ----
-    missing_defs = set(wr_df["opponent"].dropna()) - set(def_df.index)
-    if missing_defs:
-        st.warning(
-            f"Missing defense data for: {', '.join(sorted(missing_defs))}"
-        )
 
     # ---- Run model ----
     results = compute_model(wr_df, def_df)
@@ -130,21 +114,14 @@ if wr_file and def_file and matchup_file:
         st.warning("No valid players after filtering.")
         st.stop()
 
-    # ------------------------
-    # Display Results
-    # ------------------------
     st.subheader("WR Matchup Rankings")
     st.dataframe(results)
 
     st.subheader("Targets (Best Matchups)")
-    st.dataframe(
-        results.sort_values("edge", ascending=False).head(10)
-    )
+    st.dataframe(results.sort_values("edge", ascending=False).head(10))
 
     st.subheader("Fades (Worst Matchups)")
-    st.dataframe(
-        results.sort_values("edge").head(10)
-    )
+    st.dataframe(results.sort_values("edge").head(10))
 
 else:
     st.info("Upload WR, Defense, and Matchup CSV files to begin.")
