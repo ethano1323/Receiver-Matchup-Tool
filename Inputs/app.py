@@ -234,7 +234,7 @@ number_format = {
 }
 
 # Rankings table
-st.subheader("Receiver Rankings")
+st.subheader("Player Rankings")
 st.markdown(
     "Players are sorted by the absolute value of Edge, so the largest positive or negative matchups appear at the top."
 )
