@@ -79,7 +79,7 @@ def compute_model(
         onehigh_ratio = row["yprr_1high"] / base
         twohigh_ratio = row["yprr_2high"] / base
         zerohigh_ratio = row["yprr_0high"] / base
-        blitz_ratio = row["yprr_blitz"] / base  # Already filled with base_yprr if missing
+        blitz_ratio = row["yprr_blitz"] / base  # Blitz included
 
         # ---- Coverage weighting ----
         coverage_component = (
@@ -186,10 +186,17 @@ for col in ["man_pct", "zone_pct", "onehigh_pct", "twohigh_pct", "zerohigh_pct",
     else:
         def_df[col] = 0.0
 
-# ---- Merge Matchups ----
+# ---- Merge Matchups & Blitz ----
 wr_df = wr_df.merge(matchup_df, on="team", how="left")
-wr_df = wr_df.merge(blitz_df, on="player", how="left")
-wr_df["yprr_blitz"] = wr_df["yprr_blitz"].fillna(wr_df["base_yprr"])
+
+if blitz_df is not None:
+    wr_df = wr_df.merge(blitz_df, on="player", how="left")
+
+# Ensure yprr_blitz column exists
+if "yprr_blitz" not in wr_df.columns:
+    wr_df["yprr_blitz"] = wr_df["base_yprr"]
+else:
+    wr_df["yprr_blitz"] = wr_df["yprr_blitz"].fillna(wr_df["base_yprr"])
 
 # ------------------------
 # Compute Results
