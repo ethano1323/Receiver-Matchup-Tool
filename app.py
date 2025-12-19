@@ -5,8 +5,8 @@ import numpy as np
 # ------------------------
 # Page Setup
 # ------------------------
-st.set_page_config(page_title="NFL WR YPRR Matchup Model", layout="wide")
-st.title("NFL WR YPRR Matchup Model (Current Season)")
+st.set_page_config(page_title="NFL WR Matchup Model", layout="wide")
+st.title("NFL WR Coverage Matchup Model (Current Season)")
 
 # ------------------------
 # Upload Data
@@ -17,94 +17,58 @@ wr_file = st.sidebar.file_uploader("Upload WR Data CSV", type="csv")
 def_file = st.sidebar.file_uploader("Upload Defense Data CSV", type="csv")
 matchup_file = st.sidebar.file_uploader("Upload Weekly Matchups CSV", type="csv")
 
-league_lead_routes = st.sidebar.number_input(
-    "League Leader Routes Run", min_value=1, value=100
-)
-
 # ------------------------
-# Sliders
+# Utility
 # ------------------------
-st.sidebar.header("Model Controls")
-
-sample_scaling = st.sidebar.slider(
-    "Sample Size Penalty Strength", 0.0, 1.0, 0.5, 0.05
-)
-
-coverage_weight = st.sidebar.slider(
-    "Coverage Adjustment Strength", 0.0, 1.0, 0.4, 0.05
-)
-
-# ------------------------
-# Utility Functions
-# ------------------------
-def sample_size_penalty(routes, league_lead, scale):
-    pct = routes / league_lead
-    if pct >= 0.75:
-        return 1.0
-    return max(0.5, pct / 0.75 * scale)
+def clamp(val, low, high):
+    return max(low, min(high, val))
 
 # ------------------------
 # Core Model
 # ------------------------
-def compute_model(wr_df, def_df, league_lead, sample_scaling, coverage_weight):
+def compute_model(wr_df, def_df):
 
     results = []
 
     for _, row in wr_df.iterrows():
 
-        # ---- Skip invalid rows ----
+        # ---- Basic row validation ----
         if row["routes_played"] <= 0 or row["base_yprr"] <= 0:
             continue
 
         opp = row["opponent"]
 
-        # ---- SAFE OPPONENT LOOKUP (DROP-IN FIX) ----
+        # ---- Safe opponent lookup ----
         if pd.isna(opp) or opp not in def_df.index:
             continue
 
         defense = def_df.loc[opp]
         base = row["base_yprr"]
 
-        # ---- Sample Size Penalty ----
-        sample_pen = sample_size_penalty(
-            row["routes_played"], league_lead, sample_scaling
-        )
-
         # ---- Expected YPRR vs Coverage ----
-        cov_yprr = (
+        expected_yprr = (
             defense["man_pct"] * row["yprr_man"]
             + defense["zone_pct"] * row["yprr_zone"]
         )
 
-        safety_adj = (
-            defense["onehigh_pct"] * row["yprr_1high"]
-            + defense["twohigh_pct"] * row["yprr_2high"]
-        )
+        # ---- Relative Matchup Delta ----
+        raw_delta = (expected_yprr - base) / base
+        raw_delta = clamp(raw_delta, -0.30, 0.30)  # cap extremes
 
-        blitz_adj = (
-            defense["blitz_pct"] * row["yprr_blitz"]
-            + defense["noblitz_pct"] * row["yprr_standard"]
-        )
+        # ---- Matchup Edge (0–100%) ----
+        matchup_edge_pct = ((raw_delta + 0.30) / 0.60) * 100
 
-        # Normalize to base YPRR
-        coverage_ratio = (cov_yprr / base) * (safety_adj / base) * (blitz_adj / base)
-
-        # ---- Controlled Adjustment (NO EXPLOSIONS) ----
-        coverage_adjustment = 1 + coverage_weight * (coverage_ratio - 1)
-
-        adjusted_yprr = (
-            base
-            * coverage_adjustment
-            * sample_pen
-            * row["season_route_share"]
-        )
+        # ---- Adjusted YPRR (Controlled) ----
+        adjusted_yprr = base * (1 + raw_delta)
 
         results.append({
             "player": row["player"],
             "team": row["team"],
             "opponent": opp,
             "base_yprr": round(base, 1),
-            "adjusted_yprr": round(adjusted_yprr, 1)
+            "adjusted_yprr": round(adjusted_yprr, 1),
+            "matchup_edge_pct": round(matchup_edge_pct, 1),
+            "raw_delta_pct": round(raw_delta * 100, 1)
         })
 
     df = pd.DataFrame(results)
@@ -112,9 +76,7 @@ def compute_model(wr_df, def_df, league_lead, sample_scaling, coverage_weight):
     if df.empty:
         return df
 
-    df["edge"] = round(df["adjusted_yprr"] - df["base_yprr"], 1)
-    df["rank"] = df["adjusted_yprr"].rank(ascending=False).astype(int)
-
+    df["rank"] = df["matchup_edge_pct"].rank(ascending=False).astype(int)
     return df.sort_values("rank")
 
 # ------------------------
@@ -146,22 +108,15 @@ if wr_file and def_file and matchup_file:
     # ---- Merge weekly matchups ----
     wr_df = wr_df.merge(matchup_df, on="team", how="left")
 
-    # ---- DEBUG WARNING PANEL ----
+    # ---- Debug warning for missing defenses ----
     missing_defs = set(wr_df["opponent"].dropna()) - set(def_df.index)
-
     if missing_defs:
         st.warning(
             f"Missing defense data for: {', '.join(sorted(missing_defs))}"
         )
 
     # ---- Run Model ----
-    results = compute_model(
-        wr_df,
-        def_df,
-        league_lead_routes,
-        sample_scaling,
-        coverage_weight
-    )
+    results = compute_model(wr_df, def_df)
 
     if results.empty:
         st.warning("No valid player projections were generated.")
@@ -173,13 +128,15 @@ if wr_file and def_file and matchup_file:
     st.subheader("Adjusted YPRR Rankings")
     st.dataframe(results)
 
-    st.subheader("Targets (Top 10 Positive Edge)")
-    st.dataframe(results.sort_values("edge", ascending=False).head(10))
+    st.subheader("Targets (Best Matchups)")
+    st.dataframe(
+        results.sort_values("matchup_edge_pct", ascending=False).head(10)
+    )
 
-    st.subheader("Fades (Filtered)")
-    fades = results.sort_values("edge").head(10)
-    fades = fades[fades["adjusted_yprr"] >= 0.3]
-    st.dataframe(fades)
+    st.subheader("Fades (Worst Matchups)")
+    st.dataframe(
+        results.sort_values("matchup_edge_pct").head(10)
+    )
 
 else:
     st.info("Upload WR, Defense, and Matchup CSV files to begin.")
