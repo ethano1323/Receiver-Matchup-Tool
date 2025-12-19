@@ -6,22 +6,16 @@ import numpy as np
 # Page Setup
 # ------------------------
 st.set_page_config(page_title="NFL WR Matchup Model", layout="wide")
-st.title("NFL WR Coverage Matchup Model (Current Season)")
+st.title("NFL WR Coverage Matchup Model (Current Season Only)")
 
 # ------------------------
 # Upload Data
 # ------------------------
-st.sidebar.header("Upload Data")
+st.sidebar.header("Upload Data Files")
 
-wr_file = st.sidebar.file_uploader("Upload WR Data CSV", type="csv")
-def_file = st.sidebar.file_uploader("Upload Defense Data CSV", type="csv")
-matchup_file = st.sidebar.file_uploader("Upload Weekly Matchups CSV", type="csv")
-
-# ------------------------
-# Utility
-# ------------------------
-def clamp(val, low, high):
-    return max(low, min(high, val))
+wr_file = st.sidebar.file_uploader("WR Data CSV", type="csv")
+def_file = st.sidebar.file_uploader("Defense Tendencies CSV", type="csv")
+matchup_file = st.sidebar.file_uploader("Weekly Matchups CSV", type="csv")
 
 # ------------------------
 # Core Model
@@ -32,43 +26,58 @@ def compute_model(wr_df, def_df):
 
     for _, row in wr_df.iterrows():
 
-        # ---- Basic row validation ----
-        if row["routes_played"] <= 0 or row["base_yprr"] <= 0:
+        base = row["base_yprr"]
+
+        # ---- Hard filters ----
+        if base < 0.2:
+            continue
+        if row["routes_played"] <= 0:
             continue
 
         opp = row["opponent"]
-
-        # ---- Safe opponent lookup ----
         if pd.isna(opp) or opp not in def_df.index:
             continue
 
         defense = def_df.loc[opp]
-        base = row["base_yprr"]
 
-        # ---- Expected YPRR vs Coverage ----
-        expected_yprr = (
-            defense["man_pct"] * row["yprr_man"]
-            + defense["zone_pct"] * row["yprr_zone"]
+        # ---- Normalize WR splits vs base ----
+        man_ratio = row["yprr_man"] / base
+        zone_ratio = row["yprr_zone"] / base
+        onehigh_ratio = row["yprr_1high"] / base
+        twohigh_ratio = row["yprr_2high"] / base
+
+        # ---- Opponent-weighted coverage matchup ----
+        coverage_ratio = (
+            defense["man_pct"] * man_ratio
+            + defense["zone_pct"] * zone_ratio
         )
 
-        # ---- Relative Matchup Delta ----
-        raw_delta = (expected_yprr - base) / base
-        raw_delta = clamp(raw_delta, -0.30, 0.30)  # cap extremes
+        safety_ratio = (
+            defense["onehigh_pct"] * onehigh_ratio
+            + defense["twohigh_pct"] * twohigh_ratio
+        )
 
-        # ---- Matchup Edge (0–100%) ----
-        matchup_edge_pct = ((raw_delta + 0.30) / 0.60) * 100
+        # ---- Expected matchup ratio ----
+        expected_ratio = coverage_ratio * safety_ratio
 
-        # ---- Adjusted YPRR (Controlled) ----
-        adjusted_yprr = base * (1 + raw_delta)
+        # ---- Adjusted YPRR ----
+        adjusted_yprr = base * expected_ratio
+
+        # ---- Relative edge (bounded) ----
+        raw_edge = (adjusted_yprr - base) / base
+        raw_edge = np.clip(raw_edge, -0.25, 0.25)
+
+        # ---- Edge score: -100 to +100 ----
+        edge_score = (raw_edge / 0.25) * 100
 
         results.append({
             "player": row["player"],
             "team": row["team"],
             "opponent": opp,
-            "base_yprr": round(base, 1),
-            "adjusted_yprr": round(adjusted_yprr, 1),
-            "matchup_edge_pct": round(matchup_edge_pct, 1),
-            "raw_delta_pct": round(raw_delta * 100, 1)
+            "base_yprr": round(base, 2),
+            "adjusted_yprr": round(adjusted_yprr, 2),
+            "edge": round(edge_score, 1),
+            "raw_edge_pct": round(raw_edge * 100, 1)
         })
 
     df = pd.DataFrame(results)
@@ -76,7 +85,7 @@ def compute_model(wr_df, def_df):
     if df.empty:
         return df
 
-    df["rank"] = df["matchup_edge_pct"].rank(ascending=False).astype(int)
+    df["rank"] = df["edge"].rank(ascending=False).astype(int)
     return df.sort_values("rank")
 
 # ------------------------
@@ -88,18 +97,17 @@ if wr_file and def_file and matchup_file:
     def_df_raw = pd.read_csv(def_file)
     matchup_df = pd.read_csv(matchup_file)
 
-    # ---- Detect defense team column automatically ----
-    possible_team_cols = ["team", "defense", "def_team", "abbr"]
+    # ---- Identify defense team column safely ----
     team_col = None
-
-    for col in possible_team_cols:
+    for col in ["team", "defense", "def_team", "abbr"]:
         if col in def_df_raw.columns:
             team_col = col
             break
 
     if team_col is None:
         st.error(
-            "Defense CSV must contain a team column (e.g. 'team', 'defense', 'def_team')."
+            "Defense CSV must contain a team column "
+            "(e.g. 'team', 'defense', 'def_team', or 'abbr')."
         )
         st.stop()
 
@@ -108,36 +116,35 @@ if wr_file and def_file and matchup_file:
     # ---- Merge weekly matchups ----
     wr_df = wr_df.merge(matchup_df, on="team", how="left")
 
-    # ---- Debug warning for missing defenses ----
+    # ---- Debug missing defenses ----
     missing_defs = set(wr_df["opponent"].dropna()) - set(def_df.index)
     if missing_defs:
         st.warning(
             f"Missing defense data for: {', '.join(sorted(missing_defs))}"
         )
 
-    # ---- Run Model ----
+    # ---- Run model ----
     results = compute_model(wr_df, def_df)
 
     if results.empty:
-        st.warning("No valid player projections were generated.")
+        st.warning("No valid players after filtering.")
         st.stop()
 
     # ------------------------
     # Display Results
     # ------------------------
-    st.subheader("Adjusted YPRR Rankings")
+    st.subheader("WR Matchup Rankings")
     st.dataframe(results)
 
     st.subheader("Targets (Best Matchups)")
     st.dataframe(
-        results.sort_values("matchup_edge_pct", ascending=False).head(10)
+        results.sort_values("edge", ascending=False).head(10)
     )
 
     st.subheader("Fades (Worst Matchups)")
     st.dataframe(
-        results.sort_values("matchup_edge_pct").head(10)
+        results.sort_values("edge").head(10)
     )
 
 else:
     st.info("Upload WR, Defense, and Matchup CSV files to begin.")
-
