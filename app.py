@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 # ------------------------
 # Page Setup
@@ -117,13 +118,13 @@ def compute_model(
         edge_score *= (1 - penalty)
 
         results.append({
-            "player": row["player"],
-            "team": row["team"],
-            "opponent": opponent,
-            "route_share": round(route_share, 3),
-            "base_yprr": round(base, 2),
-            "adjusted_yprr": round(adjusted_yprr, 2),
-            "edge": round(edge_score, 1)
+            "Player": row["player"],
+            "Team": row["team"],
+            "Opponent": opponent,
+            "Route Share": round(route_share, 3),
+            "Base YPRR": round(base, 2),
+            "Adjusted YPRR": round(adjusted_yprr, 2),
+            "Edge": round(edge_score, 1)
         })
 
     df = pd.DataFrame(results)
@@ -131,10 +132,10 @@ def compute_model(
         return df
 
     if qualified_toggle:
-        df = df[df["route_share"] >= 0.35]
+        df = df[df["Route Share"] >= 0.35]
 
-    df = df.sort_values("edge", ascending=False)
-    df["rank"] = range(1, len(df) + 1)
+    df = df.sort_values("Edge", ascending=False)
+    df["Rank"] = range(1, len(df) + 1)
 
     return df
 
@@ -192,32 +193,48 @@ if wr_file and def_file and matchup_file and blitz_file:
         st.warning("No players available after filtering.")
         st.stop()
 
+    # ---- Column order and tooltips ----
     display_cols = [
-        "rank",
-        "player",
-        "team",
-        "opponent",
-        "route_share",
-        "base_yprr",
-        "adjusted_yprr",
-        "edge"
+        "Rank",
+        "Player",
+        "Team",
+        "Opponent",
+        "Route Share",
+        "Base YPRR",
+        "Adjusted YPRR",
+        "Edge"
     ]
 
+    tooltips = {
+        "Rank": "Overall rank by Edge",
+        "Player": "Wide Receiver name",
+        "Team": "Player's team",
+        "Opponent": "Opponent team this week",
+        "Route Share": "Proportion of league-lead routes played",
+        "Base YPRR": "Player's base YPRR for the season",
+        "Adjusted YPRR": "YPRR adjusted for coverage, safety, and blitz",
+        "Edge": "Matchup advantage/disadvantage (positive = good, negative = bad)"
+    }
+
     st.subheader("WR Matchup Rankings")
-    st.dataframe(results[display_cols].reset_index(drop=True))
+    gb = GridOptionsBuilder.from_dataframe(results[display_cols])
+    gb.configure_columns(list(tooltips.keys()), tooltip=tooltips)
+    gb.configure_default_column(flex=1, min_width=100)
+    grid_options = gb.build()
+    AgGrid(results[display_cols], gridOptions=grid_options, height=400)
 
     # ---- Targets & Fades ----
     min_edge = 7.5
     min_routes = 0.40
 
     targets = results[
-        (results["edge"] >= min_edge) &
-        (results["route_share"] >= min_routes)
+        (results["Edge"] >= min_edge) &
+        (results["Route Share"] >= min_routes)
     ]
 
     fades = results[
-        (results["edge"] <= -min_edge) &
-        (results["route_share"] >= min_routes)
+        (results["Edge"] <= -min_edge) &
+        (results["Route Share"] >= min_routes)
     ]
 
     st.subheader("Targets (Best Matchups)")
@@ -228,7 +245,7 @@ if wr_file and def_file and matchup_file and blitz_file:
         f"• Adjusted YPRR reflects coverage + safety + blitz"
     )
     if not targets.empty:
-        st.dataframe(targets[display_cols].reset_index(drop=True))
+        AgGrid(targets[display_cols], gridOptions=grid_options, height=300)
     else:
         st.write("No players meet the target criteria this week.")
 
@@ -240,12 +257,13 @@ if wr_file and def_file and matchup_file and blitz_file:
         f"• Blitz exposure contributes to downside"
     )
     if not fades.empty:
-        st.dataframe(fades[display_cols].reset_index(drop=True))
+        AgGrid(fades[display_cols], gridOptions=grid_options, height=300)
     else:
         st.write("No players meet the fade criteria this week.")
 
 else:
     st.info("Upload WR, Defense, Matchup, and Blitz CSV files to begin.")
+
 
 
 
