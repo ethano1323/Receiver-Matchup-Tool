@@ -89,10 +89,10 @@ wr_df = wr_df.merge(matchup_df, on="team", how="left")
 def compute_model(
     wr_df,
     def_df,
-    max_penalty=0.8,
+    max_penalty=0.6,  # updated max penalty
     exponent=2,
-    start_penalty=40,  # adjusted threshold (%)
-    end_penalty=10     # adjusted threshold (%)
+    start_penalty=30,  # updated threshold (%)
+    end_penalty=5      # updated threshold (%)
 ):
     results = []
 
@@ -155,7 +155,7 @@ def compute_model(
         edge_score = (raw_edge / 0.25) * 100
 
         # ------------------------
-        # Route-share penalty using CSV percentage directly
+        # Route-share regression toward 0
         route_share = row.get("route_share", np.nan)
         if pd.isna(route_share):
             route_share = 0  # treat missing as 0
@@ -165,17 +165,16 @@ def compute_model(
         elif route_share <= end_penalty:
             penalty = max_penalty
         else:
-            penalty = max_penalty * (
-                (start_penalty - route_share) / (start_penalty - end_penalty)
-            ) ** exponent
+            penalty = max_penalty * ((start_penalty - route_share) / (start_penalty - end_penalty)) ** exponent
 
+        # Apply regression toward zero
         edge_score *= (1 - penalty)
 
         results.append({
             "Player": row["player"],
             "Team": row["team"],
             "Opponent": opponent,
-            "Route Share": route_share,  # keep as 0–100
+            "Route Share": route_share,  # 0–100
             "Base YPRR": round(base, 2),
             "Adjusted YPRR": round(adjusted_yprr, 2),
             "Edge": round(edge_score, 1)
@@ -186,7 +185,7 @@ def compute_model(
         return df
 
     if qualified_toggle:
-        df = df[df["Route Share"] >= 35]  # match percentage scale
+        df = df[df["Route Share"] >= 35]
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rank"] = range(1, len(df) + 1)
