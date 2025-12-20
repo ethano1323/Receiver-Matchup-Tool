@@ -17,7 +17,14 @@ DEFAULT_MATCHUP_PATH = "data/standard_matchup_data.csv"
 DEFAULT_BLITZ_PATH = "data/standard_blitz_data.csv"
 
 # ------------------------
-# Upload Data (Optional Overrides)
+# Session State Initialization
+# ------------------------
+for key in ["wr_file", "def_file", "matchup_file", "blitz_file"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
+
+# ------------------------
+# Sidebar Controls
 # ------------------------
 st.sidebar.header("Controls")
 
@@ -26,36 +33,71 @@ show_inputs = st.sidebar.checkbox(
     value=False
 )
 
-upload_container = st.sidebar.container()
-
-if show_inputs:
-    with upload_container:
-        st.header("Optional: Upload Your Own Data")
-
-        wr_file = st.file_uploader("WR Data CSV", type="csv")
-        def_file = st.file_uploader("Defense Tendencies CSV", type="csv")
-        matchup_file = st.file_uploader("Weekly Matchups CSV", type="csv")
-        blitz_file = st.file_uploader("WR Blitz YPRR CSV", type="csv")
-else:
-    # Uploaders still exist, just not shown
-    wr_file = upload_container.file_uploader("WR Data CSV", type="csv", key="wr_hidden")
-    def_file = upload_container.file_uploader("Defense Tendencies CSV", type="csv", key="def_hidden")
-    matchup_file = upload_container.file_uploader("Weekly Matchups CSV", type="csv", key="matchup_hidden")
-    blitz_file = upload_container.file_uploader("WR Blitz YPRR CSV", type="csv", key="blitz_hidden")
-
 qualified_toggle = st.sidebar.checkbox(
     "Show only qualified players (≥35% league-lead routes)"
 )
 
+# ------------------------
+# Data Upload Section (Visibility Only)
+# ------------------------
+missing_data = (
+    st.session_state.wr_file is None or
+    st.session_state.def_file is None or
+    st.session_state.matchup_file is None or
+    st.session_state.blitz_file is None
+)
+
+if show_inputs or missing_data:
+    st.sidebar.subheader("Optional: Upload Your Own Data")
+
+    st.session_state.wr_file = (
+        st.sidebar.file_uploader("WR Data CSV", type="csv")
+        or st.session_state.wr_file
+    )
+
+    st.session_state.def_file = (
+        st.sidebar.file_uploader("Defense Tendencies CSV", type="csv")
+        or st.session_state.def_file
+    )
+
+    st.session_state.matchup_file = (
+        st.sidebar.file_uploader("Weekly Matchups CSV", type="csv")
+        or st.session_state.matchup_file
+    )
+
+    st.session_state.blitz_file = (
+        st.sidebar.file_uploader("WR Blitz YPRR CSV", type="csv")
+        or st.session_state.blitz_file
+    )
 
 # ------------------------
 # Load Data (Default or Uploaded)
 # ------------------------
 try:
-    wr_df = pd.read_csv(wr_file) if wr_file else pd.read_csv(DEFAULT_WR_PATH)
-    def_df_raw = pd.read_csv(def_file) if def_file else pd.read_csv(DEFAULT_DEF_PATH)
-    matchup_df = pd.read_csv(matchup_file) if matchup_file else pd.read_csv(DEFAULT_MATCHUP_PATH)
-    blitz_df = pd.read_csv(blitz_file) if blitz_file else pd.read_csv(DEFAULT_BLITZ_PATH)
+    wr_df = (
+        pd.read_csv(st.session_state.wr_file)
+        if st.session_state.wr_file
+        else pd.read_csv(DEFAULT_WR_PATH)
+    )
+
+    def_df_raw = (
+        pd.read_csv(st.session_state.def_file)
+        if st.session_state.def_file
+        else pd.read_csv(DEFAULT_DEF_PATH)
+    )
+
+    matchup_df = (
+        pd.read_csv(st.session_state.matchup_file)
+        if st.session_state.matchup_file
+        else pd.read_csv(DEFAULT_MATCHUP_PATH)
+    )
+
+    blitz_df = (
+        pd.read_csv(st.session_state.blitz_file)
+        if st.session_state.blitz_file
+        else pd.read_csv(DEFAULT_BLITZ_PATH)
+    )
+
 except Exception as e:
     st.error(f"Error loading data: {e}")
     st.stop()
@@ -64,12 +106,18 @@ except Exception as e:
 # Normalize player names for merging
 # ------------------------
 def normalize_name(name):
-    return str(name).lower().replace(".", "").replace(" jr", "").replace(" iii", "").strip()
+    return (
+        str(name)
+        .lower()
+        .replace(".", "")
+        .replace(" jr", "")
+        .replace(" iii", "")
+        .strip()
+    )
 
 wr_df["player_norm"] = wr_df["player"].apply(normalize_name)
 blitz_df["player_norm"] = blitz_df["player"].apply(normalize_name)
 
-# Merge blitz data
 wr_df = wr_df.merge(
     blitz_df[["player_norm", "yprr_blitz"]],
     on="player_norm",
@@ -92,6 +140,7 @@ required_cols = [
     "onehigh_pct", "twohigh_pct", "zerohigh_pct",
     "blitz_pct"
 ]
+
 for col in required_cols:
     if col not in def_df.columns:
         st.error(f"Missing required defense column: {col}")
@@ -102,7 +151,7 @@ for col in required_cols:
 wr_df = wr_df.merge(matchup_df, on="team", how="left")
 
 # ------------------------
-# Core Model Function
+# Core Model
 # ------------------------
 def compute_model(
     wr_df,
@@ -116,6 +165,7 @@ def compute_model(
     results = []
 
     for _, row in wr_df.iterrows():
+
         base = row["base_yprr"]
         routes = row["routes_played"]
 
@@ -135,23 +185,26 @@ def compute_model(
         twohigh_ratio = row["yprr_2high"] / base
         zerohigh_ratio = row["yprr_0high"] / base
 
-        blitz_ratio = row.get("yprr_blitz", np.nan)
+        blitz_ratio = row["yprr_blitz"]
         blitz_ratio = 1.0 if pd.isna(blitz_ratio) else blitz_ratio / base
 
         coverage_component = (
             defense["man_pct"] * man_ratio +
             defense["zone_pct"] * zone_ratio
         )
+
         safety_component = (
             defense["onehigh_pct"] * onehigh_ratio +
             defense["twohigh_pct"] * twohigh_ratio +
             defense["zerohigh_pct"] * zerohigh_ratio
         )
+
         total_safety = (
             defense["onehigh_pct"] +
             defense["twohigh_pct"] +
             defense["zerohigh_pct"]
         )
+
         if total_safety > 0:
             safety_component /= total_safety
 
@@ -185,18 +238,16 @@ def compute_model(
             "Player": row["player"],
             "Team": row["team"],
             "Opponent": opponent,
-            "Route Share": round(route_share, 1),
+            "Route Share": round(route_share * 100, 1),
             "Base YPRR": round(base, 2),
             "Adjusted YPRR": round(adjusted_yprr, 2),
             "Edge": round(edge_score, 1)
         })
 
     df = pd.DataFrame(results)
-    if df.empty:
-        return df
 
     if qualified_toggle:
-        df = df[df["Route Share"] >= 0.35]
+        df = df[df["Route Share"] >= 35]
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rank"] = range(1, len(df) + 1)
@@ -204,73 +255,32 @@ def compute_model(
     return df
 
 # ------------------------
-# Edge color function
-# ------------------------
-def color_edge(val):
-    if val > 20:
-        return "color: darkgreen; font-weight: bold"
-    elif 7.5 < val <= 20:
-        return "color: green; font-weight: bold"
-    elif 0 < val <= 7.5:
-        return "color: lightgreen; font-weight: bold"
-    elif -7.5 < val <= 0:
-        return "color: lightcoral; font-weight: bold"
-    elif -20 < val <= -7.5:
-        return "color: red; font-weight: bold"
-    else:
-        return "color: darkred; font-weight: bold"
-
-# ------------------------
 # Run Model
 # ------------------------
 results = compute_model(wr_df, def_df)
+
 if results.empty:
     st.warning("No players available after filtering.")
     st.stop()
 
-# ------------------------
-# Team Filter (Dropdown Style)
-# ------------------------
-st.sidebar.header("Team Filter")
-
-team_options = sorted(results["Team"].dropna().unique())
-
-selected_teams = st.sidebar.multiselect(
-    "Type or select team(s) to display (leave empty for all)",
-    options=team_options
-)
-
-# Apply filter ONLY if teams are selected
-if selected_teams:
-    results = results[results["Team"].isin(selected_teams)]
-
-
-# ------------------------
-# Display Tables
-# ------------------------
 display_cols = [
-    "Rank", "Player", "Team", "Opponent", "Route Share",
-    "Base YPRR", "Adjusted YPRR", "Edge"
+    "Rank", "Player", "Team", "Opponent",
+    "Route Share", "Base YPRR", "Adjusted YPRR", "Edge"
 ]
 
-number_format = {
-    "Edge": "{:.1f}",
-    "Route Share": "{:.1f}",
-    "Base YPRR": "{:.2f}",
-    "Adjusted YPRR": "{:.2f}"
-}
-
+# Rankings Table
 st.subheader("Player Rankings")
-st.dataframe(
-    results[display_cols]
-    .style
-    .applymap(color_edge, subset=["Edge"])
-    .format(number_format)
+st.markdown(
+    "Players are sorted by how far their matchup edge deviates from neutral (positive or negative)."
 )
 
+st.dataframe(results[display_cols])
+
+# ------------------------
 # Targets & Fades
+# ------------------------
 min_edge = 7.5
-min_routes = 0.40
+min_routes = 40
 
 targets = results[
     (results["Edge"] >= min_edge) &
@@ -283,17 +293,21 @@ fades = results[
 ].sort_values("Edge")
 
 st.subheader("Targets")
-st.dataframe(
-    targets[display_cols]
-    .style
-    .applymap(color_edge, subset=["Edge"])
-    .format(number_format)
-)
+st.dataframe(targets[display_cols])
 
 st.subheader("Fades")
-st.dataframe(
-    fades[display_cols]
-    .style
-    .applymap(color_edge, subset=["Edge"])
-    .format(number_format)
+st.dataframe(fades[display_cols])
+
+# ------------------------
+# Stat Definitions
+# ------------------------
+st.subheader("Stat Definitions")
+st.markdown(
+    """
+    **Route Share:** Percentage of league-leading routes run  
+    **Base YPRR:** Player’s season-long yards per route run  
+    **Adjusted YPRR:** Matchup-adjusted expectation based on coverage, safety looks, and blitz rate  
+    **Edge:** Percent advantage or disadvantage vs baseline after sample-size penalty  
+    """
 )
+
