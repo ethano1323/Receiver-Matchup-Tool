@@ -26,22 +26,27 @@ show_inputs = st.sidebar.checkbox(
     value=False
 )
 
-if show_inputs:
-    st.sidebar.header("Optional: Upload Your Own Data")
+upload_container = st.sidebar.container()
 
-    wr_file = st.sidebar.file_uploader("WR Data CSV", type="csv")
-    def_file = st.sidebar.file_uploader("Defense Tendencies CSV", type="csv")
-    matchup_file = st.sidebar.file_uploader("Weekly Matchups CSV", type="csv")
-    blitz_file = st.sidebar.file_uploader("WR Blitz YPRR CSV", type="csv")
+if show_inputs:
+    with upload_container:
+        st.header("Optional: Upload Your Own Data")
+
+        wr_file = st.file_uploader("WR Data CSV", type="csv")
+        def_file = st.file_uploader("Defense Tendencies CSV", type="csv")
+        matchup_file = st.file_uploader("Weekly Matchups CSV", type="csv")
+        blitz_file = st.file_uploader("WR Blitz YPRR CSV", type="csv")
 else:
-    wr_file = None
-    def_file = None
-    matchup_file = None
-    blitz_file = None
+    # Uploaders still exist, just not shown
+    wr_file = upload_container.file_uploader("WR Data CSV", type="csv", key="wr_hidden")
+    def_file = upload_container.file_uploader("Defense Tendencies CSV", type="csv", key="def_hidden")
+    matchup_file = upload_container.file_uploader("Weekly Matchups CSV", type="csv", key="matchup_hidden")
+    blitz_file = upload_container.file_uploader("WR Blitz YPRR CSV", type="csv", key="blitz_hidden")
 
 qualified_toggle = st.sidebar.checkbox(
     "Show only qualified players (≥35% league-lead routes)"
 )
+
 
 # ------------------------
 # Load Data (Default or Uploaded)
