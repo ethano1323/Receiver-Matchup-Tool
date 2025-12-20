@@ -7,7 +7,7 @@ import altair as alt
 # Page Setup
 # ------------------------
 st.set_page_config(page_title="NFL Receiver Matchup Model", layout="wide")
-st.title("Receiver Matchup Weekly Model")
+st.markdown("<h1 style='color:#ff6f6f'>Receiver Matchup Weekly Model</h1>", unsafe_allow_html=True)
 
 # ------------------------
 # Default Data Paths
@@ -85,7 +85,7 @@ for col in required_cols:
     if col not in def_df.columns:
         st.error(f"Missing required defense column: {col}")
         st.stop()
-    def_df[col] = def_df[col] / 100.0  # convert whole number percentages to 0-1
+    def_df[col] = def_df[col] / 100.0  # convert percentages to 0-1
 
 # Merge matchups
 wr_df = wr_df.merge(matchup_df, on="team", how="left")
@@ -205,12 +205,12 @@ def compute_model(
         # Store both system contributions for visualization
         results.append({
             "Player": row["player"],
-            "Team": row["team"],
+            "Tm": row["team"],
             "Vs.": opponent,
-            "Route (%)": route_share,  # 0–100%
+            "Route (%)": route_share,
             "Base YPRR": round(base, 2),
             "Adj. YPRR": round(adjusted_yprr, 2),
-            "Matchup Rating": round(edge_score * (1 - deviation_boost), 1),
+            "Matchup (+/-)": round(edge_score * (1 - deviation_boost), 1),
             "Deviation": round(edge_score * deviation_boost, 1),
             "Edge": round(edge_score, 1)
         })
@@ -226,7 +226,7 @@ def compute_model(
         df = df[df["Route (%)"] >= 20]
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
-    df["Rank"] = range(1, len(df) + 1)
+    df["Rk"] = range(1, len(df) + 1)
 
     return df
 
@@ -259,7 +259,7 @@ if results.empty:
 # Team Filter (Dropdown Style)
 # ------------------------
 st.sidebar.header("Team Filter")
-team_options = sorted(results["Team"].dropna().unique())
+team_options = sorted(results["Tm"].dropna().unique())
 
 selected_teams = st.sidebar.multiselect(
     "Type or select team(s) to display (leave empty for all)",
@@ -267,20 +267,19 @@ selected_teams = st.sidebar.multiselect(
 )
 
 if selected_teams:
-    results = results[results["Team"].isin(selected_teams)]
+    results = results[results["Tm"].isin(selected_teams)]
 
 # ------------------------
 # Display Tables
 # ------------------------
-# Move Edge to far right
 display_cols = [
-    "Rank", "Player", "Team", "Vs.", "Route (%)",
-    "Base YPRR", "Adj. YPRR", "Matchup Rating", "Deviation", "Edge"
+    "Rk", "Player", "Tm", "Vs.", "Route (%)",
+    "Base YPRR", "Adj. YPRR", "Matchup (+/-)", "Deviation", "Edge"
 ]
 
 number_format = {
     "Edge": "{:.1f}",
-    "Matchup Rating": "{:.1f}",
+    "Matchup (+/-)": "{:.1f}",
     "Deviation": "{:.1f}",
     "Route (%)": "{:.1f}",
     "Base YPRR": "{:.2f}",
@@ -314,7 +313,7 @@ st.dataframe(
     .style
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
-    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col not in ['Player']])
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col != 'Player'])
 )
 
 st.subheader("Fades")
@@ -329,7 +328,7 @@ st.dataframe(
     .style
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
-    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col not in ['Player']])
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col != 'Player'])
 )
 
 # ------------------------
@@ -337,7 +336,7 @@ st.dataframe(
 # ------------------------
 st.subheader("Deviation Boost Impact")
 st.markdown(
-    "Bar plot shows the contribution of Matchup Rating vs Deviation on each player's Edge."
+    "Bar plot shows the contribution of Matchup (+/-) vs Deviation on each player's Edge."
 )
 
 if not results.empty:
@@ -346,7 +345,7 @@ if not results.empty:
 
     plot_df_melt = plot_df.melt(
         id_vars=["Player"],
-        value_vars=["Matchup Rating", "Deviation"],
+        value_vars=["Matchup (+/-)", "Deviation"],
         var_name="Component",
         value_name="Edge_Contribution"
     )
@@ -354,7 +353,7 @@ if not results.empty:
     chart = alt.Chart(plot_df_melt).mark_bar().encode(
         x=alt.X('Player', sort=None),
         y='Edge_Contribution',
-        color=alt.Color('Component', scale=alt.Scale(domain=["Matchup Rating","Deviation"], range=["#4caf50","#ff9800"])),
+        color=alt.Color('Component', scale=alt.Scale(domain=["Matchup (+/-)","Deviation"], range=["#4caf50","#ff9800"])),
         tooltip=['Player','Component','Edge_Contribution']
     ).properties(width=800, height=400)
 
@@ -365,12 +364,13 @@ if not results.empty:
 # ------------------------
 st.subheader("Column Descriptions")
 st.markdown("""
-- **Rank**: Player's rank based on absolute Edge.
-- **Matchup Rating**: Projection based purely on the team's coverage and safety tendencies.
+- **Rk**: Player's rank based on absolute Edge.
+- **Matchup (+/-)**: Projection based purely on the team's coverage and safety tendencies.
 - **Deviation**: Boost or detract based on how unique the team's defensive tendencies are relative to the league.
-- **Edge**: Final score after combining Matchup Rating, Deviation, and route-share regression.
+- **Edge**: Final score after combining Matchup (+/-), Deviation, and route-share regression.
 - **Route (%)**: Percent of team routes run by the player.
 - **Base YPRR / Adj. YPRR**: Yards per route run, before and after matchup adjustments.
 - **Vs.**: Opponent team.
+- **Tm**: Player's team.
 """)
 
