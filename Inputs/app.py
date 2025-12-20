@@ -118,7 +118,10 @@ def compute_model(
         zerohigh_ratio = row["yprr_0high"] / base
 
         blitz_ratio = row.get("yprr_blitz", np.nan)
-        blitz_ratio = 1.0 if pd.isna(blitz_ratio) else blitz_ratio / base
+        if pd.isna(blitz_ratio):
+            blitz_ratio = base  # Use base YPRR if no blitz data
+        blitz_ratio /= base  # Normalize by base
+
 
         coverage_component = (
             defense["man_pct"] * man_ratio +
