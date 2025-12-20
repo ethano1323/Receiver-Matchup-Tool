@@ -84,10 +84,19 @@ for col in required_cols:
     if col not in def_df.columns:
         st.error(f"Missing required defense column: {col}")
         st.stop()
-    def_df[col] = def_df[col] / 100.0
+    def_df[col] = def_df[col] / 100.0  # convert whole number percentages to 0-1
 
 # Merge matchups
 wr_df = wr_df.merge(matchup_df, on="team", how="left")
+
+# ------------------------
+# Precompute league averages for deviation system
+# ------------------------
+league_avg_man = def_df["man_pct"].mean()
+league_avg_zone = def_df["zone_pct"].mean()
+league_avg_1high = def_df["onehigh_pct"].mean()
+league_avg_2high = def_df["twohigh_pct"].mean()
+league_avg_0high = def_df["zerohigh_pct"].mean()
 
 # ------------------------
 # Core Model Function
@@ -95,10 +104,11 @@ wr_df = wr_df.merge(matchup_df, on="team", how="left")
 def compute_model(
     wr_df,
     def_df,
-    max_penalty=0.6,    # regression toward 0
+    max_penalty=0.6,
     exponent=2,
-    start_penalty=30,   # percentage
-    end_penalty=5       # percentage
+    start_penalty=30,
+    end_penalty=5,
+    deviation_boost=0.25  # max ±25% influence
 ):
     results = []
 
@@ -116,12 +126,13 @@ def compute_model(
         defense = def_df.loc[opponent]
 
         # ------------------------
-        # Use blitz YPRR or fallback to base
+        # Blitz fallback
         blitz_ratio = row.get("yprr_blitz", np.nan)
         if pd.isna(blitz_ratio):
             blitz_ratio = base
-        blitz_ratio /= base  # normalize
+        blitz_ratio /= base
 
+        # ------------------------
         # Coverage & safety ratios
         man_ratio = row["yprr_man"] / base
         zone_ratio = row["yprr_zone"] / base
@@ -129,39 +140,53 @@ def compute_model(
         twohigh_ratio = row["yprr_2high"] / base
         zerohigh_ratio = row["yprr_0high"] / base
 
-        coverage_component = (
-            defense["man_pct"] * man_ratio +
-            defense["zone_pct"] * zone_ratio
-        )
-        safety_component = (
-            defense["onehigh_pct"] * onehigh_ratio +
-            defense["twohigh_pct"] * twohigh_ratio +
-            defense["zerohigh_pct"] * zerohigh_ratio
-        )
-        total_safety = (
-            defense["onehigh_pct"] +
-            defense["twohigh_pct"] +
-            defense["zerohigh_pct"]
-        )
+        man_pct = defense["man_pct"]
+        zone_pct = defense["zone_pct"]
+        onehigh_pct = defense["onehigh_pct"]
+        twohigh_pct = defense["twohigh_pct"]
+        zerohigh_pct = defense["zerohigh_pct"]
+
+        # ------------------------
+        # System A: main team weighting
+        coverage_component = man_pct * man_ratio + zone_pct * zone_ratio
+        total_coverage = man_pct + zone_pct
+        safety_component = onehigh_pct * onehigh_ratio + twohigh_pct * twohigh_ratio + zerohigh_pct * zerohigh_ratio
+        total_safety = onehigh_pct + twohigh_pct + zerohigh_pct
         if total_safety > 0:
             safety_component /= total_safety
 
-        coverage_safety_ratio = (coverage_component + safety_component) / 2
+        if total_coverage + total_safety > 0:
+            systemA_ratio = (coverage_component * total_coverage + safety_component * total_safety) / (total_coverage + total_safety)
+        else:
+            systemA_ratio = (coverage_component + safety_component) / 2
 
-        blitz_component = (
-            defense["blitz_pct"] * blitz_ratio +
-            (1 - defense["blitz_pct"]) * 1.0
-        )
+        # ------------------------
+        # System B: league deviation weighting
+        coverage_dev = abs(man_pct - league_avg_man) + abs(zone_pct - league_avg_zone)
+        safety_dev = abs(onehigh_pct - league_avg_1high) + abs(twohigh_pct - league_avg_2high) + abs(zerohigh_pct - league_avg_0high)
 
-        expected_ratio = (coverage_safety_ratio + blitz_component) / 2
-        adjusted_yprr = base * expected_ratio
+        if coverage_dev + safety_dev > 0:
+            coverage_weight_dev = coverage_dev / (coverage_dev + safety_dev)
+            safety_weight_dev = safety_dev / (coverage_dev + safety_dev)
+        else:
+            coverage_weight_dev = 0.5
+            safety_weight_dev = 0.5
 
+        systemB_ratio = coverage_component * coverage_weight_dev + safety_component * safety_weight_dev
+
+        # ------------------------
+        # Hybrid: final ratio with ±25% influence
+        final_ratio = systemA_ratio * (1 - deviation_boost) + systemB_ratio * deviation_boost
+
+        # ------------------------
+        # Compute adjusted YPRR & edge
+        adjusted_yprr = base * ((final_ratio + blitz_ratio) / 2)
         raw_edge = (adjusted_yprr - base) / base
         raw_edge = np.clip(raw_edge, -0.25, 0.25)
         edge_score = (raw_edge / 0.25) * 100
 
         # ------------------------
-        # Route-share regression toward 0
+        # Route-share regression toward zero
         route_share = row.get("route_share", np.nan)
         if pd.isna(route_share):
             route_share = 0
@@ -173,7 +198,6 @@ def compute_model(
         else:
             penalty = max_penalty * ((start_penalty - route_share) / (start_penalty - end_penalty)) ** exponent
 
-        # Apply regression toward zero
         edge_score *= (1 - penalty)
 
         results.append({
@@ -190,7 +214,7 @@ def compute_model(
     if df.empty:
         return df
 
-    # Apply route-share filters based on sidebar toggles
+    # Apply route-share filters
     if qualified_toggle_35:
         df = df[df["Route Share"] >= 35]
     elif qualified_toggle_20:
@@ -265,7 +289,7 @@ st.dataframe(
 
 # Targets & Fades
 min_edge = 7.5
-min_routes = 40  # percentage scale
+min_routes = 40  # percentage
 
 targets = results[
     (results["Edge"] >= min_edge) &
@@ -292,4 +316,3 @@ st.dataframe(
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
 )
-
