@@ -94,7 +94,6 @@ def compute_model(
     start_penalty=0.50,
     end_penalty=0.05
 ):
-    league_lead_routes = wr_df["routes_played"].max()
     results = []
 
     for _, row in wr_df.iterrows():
@@ -109,19 +108,20 @@ def compute_model(
             continue
 
         defense = def_df.loc[opponent]
-        route_share = routes / league_lead_routes
 
+        # ------------------------
+        # Use blitz YPRR or fallback to base
+        blitz_ratio = row.get("yprr_blitz", np.nan)
+        if pd.isna(blitz_ratio):
+            blitz_ratio = base
+        blitz_ratio /= base  # Normalize
+
+        # Coverage & safety ratios
         man_ratio = row["yprr_man"] / base
         zone_ratio = row["yprr_zone"] / base
         onehigh_ratio = row["yprr_1high"] / base
         twohigh_ratio = row["yprr_2high"] / base
         zerohigh_ratio = row["yprr_0high"] / base
-
-        blitz_ratio = row.get("yprr_blitz", np.nan)
-        if pd.isna(blitz_ratio):
-            blitz_ratio = base  # Use base YPRR if no blitz data
-        blitz_ratio /= base  # Normalize by base
-
 
         coverage_component = (
             defense["man_pct"] * man_ratio +
@@ -154,14 +154,19 @@ def compute_model(
         raw_edge = np.clip(raw_edge, -0.25, 0.25)
         edge_score = (raw_edge / 0.25) * 100
 
+        # ------------------------
+        # Route-share penalty using route_share column
+        route_share = row.get("route_share", np.nan)
+        if pd.isna(route_share):
+            route_share = routes / wr_df["routes_played"].sum()  # fallback
+
         if route_share >= start_penalty:
             penalty = 0
         elif route_share <= end_penalty:
             penalty = max_penalty
         else:
             penalty = max_penalty * (
-                (start_penalty - route_share) /
-                (start_penalty - end_penalty)
+                (start_penalty - route_share) / (start_penalty - end_penalty)
             ) ** exponent
 
         edge_score *= (1 - penalty)
@@ -170,7 +175,7 @@ def compute_model(
             "Player": row["player"],
             "Team": row["team"],
             "Opponent": opponent,
-            "Route Share": round(route_share, 1),
+            "Route Share": route_share,
             "Base YPRR": round(base, 2),
             "Adjusted YPRR": round(adjusted_yprr, 2),
             "Edge": round(edge_score, 1)
@@ -185,6 +190,9 @@ def compute_model(
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rank"] = range(1, len(df) + 1)
+
+    # Convert route share to percentage for display
+    df["Route Share"] = df["Route Share"] * 100
 
     return df
 
@@ -225,10 +233,8 @@ selected_teams = st.sidebar.multiselect(
     options=team_options
 )
 
-# Apply filter ONLY if teams are selected
 if selected_teams:
     results = results[results["Team"].isin(selected_teams)]
-
 
 # ------------------------
 # Display Tables
@@ -240,7 +246,7 @@ display_cols = [
 
 number_format = {
     "Edge": "{:.1f}",
-    "Route Share": "{:.1f}",
+    "Route Share": "{:.1f}%",
     "Base YPRR": "{:.2f}",
     "Adjusted YPRR": "{:.2f}"
 }
@@ -259,12 +265,12 @@ min_routes = 0.40
 
 targets = results[
     (results["Edge"] >= min_edge) &
-    (results["Route Share"] >= min_routes)
+    (results["Route Share"] / 100 >= min_routes)  # divide by 100 for decimal comparison
 ]
 
 fades = results[
     (results["Edge"] <= -min_edge) &
-    (results["Route Share"] >= min_routes)
+    (results["Route Share"] / 100 >= min_routes)
 ].sort_values("Edge")
 
 st.subheader("Targets")
