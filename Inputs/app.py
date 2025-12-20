@@ -206,10 +206,10 @@ def compute_model(
         results.append({
             "Player": row["player"],
             "Team": row["team"],
-            "Opponent": opponent,
-            "Route Share": route_share,  # 0–100%
+            "Vs.": opponent,
+            "Route (%)": route_share,  # 0–100%
             "Base YPRR": round(base, 2),
-            "Adjusted YPRR": round(adjusted_yprr, 2),
+            "Adj. YPRR": round(adjusted_yprr, 2),
             "Matchup Rating": round(edge_score * (1 - deviation_boost), 1),
             "Deviation": round(edge_score * deviation_boost, 1),
             "Edge": round(edge_score, 1)
@@ -221,9 +221,9 @@ def compute_model(
 
     # Apply route-share filters
     if qualified_toggle_35:
-        df = df[df["Route Share"] >= 35]
+        df = df[df["Route (%)"] >= 35]
     elif qualified_toggle_20:
-        df = df[df["Route Share"] >= 20]
+        df = df[df["Route (%)"] >= 20]
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rank"] = range(1, len(df) + 1)
@@ -235,17 +235,17 @@ def compute_model(
 # ------------------------
 def color_edge(val):
     if val > 20:
-        return "color: darkgreen; font-weight: bold"
+        return "color: darkgreen; font-weight: bold; text-align: center"
     elif 10 < val <= 20:
-        return "color: green; font-weight: bold"
+        return "color: green; font-weight: bold; text-align: center"
     elif 0 < val <= 10:
-        return "color: lightgreen; font-weight: bold"
+        return "color: lightgreen; font-weight: bold; text-align: center"
     elif -10 < val <= 0:
-        return "color: lightcoral; font-weight: bold"
+        return "color: lightcoral; font-weight: bold; text-align: center"
     elif -20 < val <= -10:
-        return "color: red; font-weight: bold"
+        return "color: red; font-weight: bold; text-align: center"
     else:
-        return "color: darkred; font-weight: bold"
+        return "color: darkred; font-weight: bold; text-align: center"
 
 # ------------------------
 # Run Model
@@ -274,17 +274,17 @@ if selected_teams:
 # ------------------------
 # Move Edge to far right
 display_cols = [
-    "Rank", "Player", "Team", "Opponent", "Route Share",
-    "Base YPRR", "Adjusted YPRR", "Matchup Rating", "Deviation", "Edge"
+    "Rank", "Player", "Team", "Vs.", "Route (%)",
+    "Base YPRR", "Adj. YPRR", "Matchup Rating", "Deviation", "Edge"
 ]
 
 number_format = {
     "Edge": "{:.1f}",
     "Matchup Rating": "{:.1f}",
     "Deviation": "{:.1f}",
-    "Route Share": "{:.1f}",
+    "Route (%)": "{:.1f}",
     "Base YPRR": "{:.2f}",
-    "Adjusted YPRR": "{:.2f}"
+    "Adj. YPRR": "{:.2f}"
 }
 
 st.subheader("Player Rankings")
@@ -293,6 +293,7 @@ st.dataframe(
     .style
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col != 'Player'])
 )
 
 # ------------------------
@@ -305,7 +306,7 @@ st.subheader("Targets")
 st.markdown(f"*Showing players with Edge ≥ {min_edge} and Route Share ≥ {min_routes}%*")
 targets = results[
     (results["Edge"] >= min_edge) &
-    (results["Route Share"] >= min_routes)
+    (results["Route (%)"] >= min_routes)
 ]
 
 st.dataframe(
@@ -313,13 +314,14 @@ st.dataframe(
     .style
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col not in ['Player']])
 )
 
 st.subheader("Fades")
 st.markdown(f"*Showing players with Edge ≤ -{min_edge} and Route Share ≥ {min_routes}%*")
 fades = results[
     (results["Edge"] <= -min_edge) &
-    (results["Route Share"] >= min_routes)
+    (results["Route (%)"] >= min_routes)
 ].sort_values("Edge")
 
 st.dataframe(
@@ -327,6 +329,7 @@ st.dataframe(
     .style
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col not in ['Player']])
 )
 
 # ------------------------
@@ -366,7 +369,8 @@ st.markdown("""
 - **Matchup Rating**: Projection based purely on the team's coverage and safety tendencies.
 - **Deviation**: Boost or detract based on how unique the team's defensive tendencies are relative to the league.
 - **Edge**: Final score after combining Matchup Rating, Deviation, and route-share regression.
-- **Route Share**: Percent of team routes run by the player.
-- **Base YPRR / Adjusted YPRR**: Yards per route run, before and after matchup adjustments.
+- **Route (%)**: Percent of team routes run by the player.
+- **Base YPRR / Adj. YPRR**: Yards per route run, before and after matchup adjustments.
+- **Vs.**: Opponent team.
 """)
 
