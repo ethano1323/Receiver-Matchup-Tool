@@ -91,8 +91,8 @@ def compute_model(
     def_df,
     max_penalty=0.8,
     exponent=2,
-    start_penalty=0.50,
-    end_penalty=0.05
+    start_penalty=50,  # now matching percentage scale
+    end_penalty=5      # now matching percentage scale
 ):
     results = []
 
@@ -155,7 +155,7 @@ def compute_model(
         edge_score = (raw_edge / 0.25) * 100
 
         # ------------------------
-        # Route-share penalty using route_share column from CSV
+        # Route-share penalty using CSV percentage directly
         route_share = row.get("route_share", np.nan)
         if pd.isna(route_share):
             route_share = 0  # treat missing as 0
@@ -175,7 +175,7 @@ def compute_model(
             "Player": row["player"],
             "Team": row["team"],
             "Opponent": opponent,
-            "Route Share": route_share,  # keep as 0-1
+            "Route Share": route_share,  # keep as 0–100
             "Base YPRR": round(base, 2),
             "Adjusted YPRR": round(adjusted_yprr, 2),
             "Edge": round(edge_score, 1)
@@ -186,13 +186,10 @@ def compute_model(
         return df
 
     if qualified_toggle:
-        df = df[df["Route Share"] >= 0.35]
+        df = df[df["Route Share"] >= 35]  # match percentage scale
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rank"] = range(1, len(df) + 1)
-
-    # Convert route share to percentage for display
-    df["Route Share"] = df["Route Share"] * 100
 
     return df
 
@@ -246,7 +243,7 @@ display_cols = [
 
 number_format = {
     "Edge": "{:.1f}",
-    "Route Share": "{:.1f}%",
+    "Route Share": "{:.1f}",
     "Base YPRR": "{:.2f}",
     "Adjusted YPRR": "{:.2f}"
 }
@@ -261,16 +258,16 @@ st.dataframe(
 
 # Targets & Fades
 min_edge = 7.5
-min_routes = 0.40
+min_routes = 40  # match percentage scale
 
 targets = results[
     (results["Edge"] >= min_edge) &
-    (results["Route Share"] / 100 >= min_routes)
+    (results["Route Share"] >= min_routes)
 ]
 
 fades = results[
     (results["Edge"] <= -min_edge) &
-    (results["Route Share"] / 100 >= min_routes)
+    (results["Route Share"] >= min_routes)
 ].sort_values("Edge")
 
 st.subheader("Targets")
@@ -288,4 +285,3 @@ st.dataframe(
     .applymap(color_edge, subset=["Edge"])
     .format(number_format)
 )
-
