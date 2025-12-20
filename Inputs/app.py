@@ -19,12 +19,25 @@ DEFAULT_BLITZ_PATH = "data/standard_blitz_data.csv"
 # ------------------------
 # Upload Data (Optional Overrides)
 # ------------------------
-st.sidebar.header("Optional: Upload Your Own Data")
+st.sidebar.header("Controls")
 
-wr_file = st.sidebar.file_uploader("WR Data CSV", type="csv")
-def_file = st.sidebar.file_uploader("Defense Tendencies CSV", type="csv")
-matchup_file = st.sidebar.file_uploader("Weekly Matchups CSV", type="csv")
-blitz_file = st.sidebar.file_uploader("WR Blitz YPRR CSV", type="csv")
+show_inputs = st.sidebar.checkbox(
+    "Show data input controls",
+    value=False
+)
+
+if show_inputs:
+    st.sidebar.header("Optional: Upload Your Own Data")
+
+    wr_file = st.sidebar.file_uploader("WR Data CSV", type="csv")
+    def_file = st.sidebar.file_uploader("Defense Tendencies CSV", type="csv")
+    matchup_file = st.sidebar.file_uploader("Weekly Matchups CSV", type="csv")
+    blitz_file = st.sidebar.file_uploader("WR Blitz YPRR CSV", type="csv")
+else:
+    wr_file = None
+    def_file = None
+    matchup_file = None
+    blitz_file = None
 
 qualified_toggle = st.sidebar.checkbox(
     "Show only qualified players (≥35% league-lead routes)"
