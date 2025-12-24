@@ -183,7 +183,6 @@ def compute_model(
         # Compute adjusted YPRR & edge
         adjusted_yprr = base * ((final_ratio + blitz_ratio) / 2)
         raw_edge = (adjusted_yprr - base) / base
-        raw_edge = np.clip(raw_edge, -0.25, 0.25)
         edge_score = (raw_edge / 0.25) * 100
 
         # ------------------------
