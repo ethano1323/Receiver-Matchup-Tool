@@ -30,11 +30,15 @@ blitz_file = st.sidebar.file_uploader("WR Blitz YPRR CSV", type="csv")
 # ------------------------
 # Route-share filter toggles
 # ------------------------
-qualified_toggle_35 = st.sidebar.checkbox("Show only players ≥35% route share")
-qualified_toggle_20 = st.sidebar.checkbox("Show only players ≥20% route share")
+qualified_toggle_35 = st.sidebar.checkbox(
+    "Show only players ≥35% route share"
+)
+qualified_toggle_20 = st.sidebar.checkbox(
+    "Show only players ≥20% route share"
+)
 
 # ------------------------
-# Load Data
+# Load Data (Default or Uploaded)
 # ------------------------
 try:
     wr_df = pd.read_csv(wr_file) if wr_file else pd.read_csv(DEFAULT_WR_PATH)
@@ -46,7 +50,7 @@ except Exception as e:
     st.stop()
 
 # ------------------------
-# Normalize player names
+# Normalize player names for merging
 # ------------------------
 def normalize_name(name):
     return str(name).lower().replace(".", "").replace(" jr", "").replace(" iii", "").strip()
@@ -54,6 +58,7 @@ def normalize_name(name):
 wr_df["player_norm"] = wr_df["player"].apply(normalize_name)
 blitz_df["player_norm"] = blitz_df["player"].apply(normalize_name)
 
+# Merge blitz data
 wr_df = wr_df.merge(
     blitz_df[["player_norm", "yprr_blitz"]],
     on="player_norm",
@@ -76,17 +81,17 @@ required_cols = [
     "onehigh_pct", "twohigh_pct", "zerohigh_pct",
     "blitz_pct"
 ]
-
 for col in required_cols:
     if col not in def_df.columns:
         st.error(f"Missing required defense column: {col}")
         st.stop()
-    def_df[col] /= 100.0
+    def_df[col] = def_df[col] / 100.0  # convert percentages to 0-1
 
+# Merge matchups
 wr_df = wr_df.merge(matchup_df, on="team", how="left")
 
 # ------------------------
-# League Averages
+# Precompute league averages for deviation system
 # ------------------------
 league_avg_man = def_df["man_pct"].mean()
 league_avg_zone = def_df["zone_pct"].mean()
@@ -95,19 +100,7 @@ league_avg_2high = def_df["twohigh_pct"].mean()
 league_avg_0high = def_df["zerohigh_pct"].mean()
 
 # ------------------------
-# NEW: Regression + Clamping Constants
-# ------------------------
-REGRESSION_K = 20
-MIN_RATIO = 0.6
-MAX_RATIO = 1.6
-
-def regress_to_player_base(split_yprr, base_yprr, routes, k=REGRESSION_K):
-    if pd.isna(split_yprr) or split_yprr <= 0:
-        return base_yprr
-    return (split_yprr * routes + base_yprr * k) / (routes + k)
-
-# ------------------------
-# Core Model
+# Core Model Function
 # ------------------------
 def compute_model(
     wr_df,
@@ -116,7 +109,7 @@ def compute_model(
     exponent=2,
     start_penalty=30,
     end_penalty=5,
-    deviation_boost=0.25
+    deviation_boost=0.25  # max ±25% influence
 ):
     results = []
 
@@ -134,30 +127,19 @@ def compute_model(
         defense = def_df.loc[opponent]
 
         # ------------------------
-        # Player-relative regression (NEW)
-        man_yprr = regress_to_player_base(row["yprr_man"], base, routes)
-        zone_yprr = regress_to_player_base(row["yprr_zone"], base, routes)
-        onehigh_yprr = regress_to_player_base(row["yprr_1high"], base, routes)
-        twohigh_yprr = regress_to_player_base(row["yprr_2high"], base, routes)
-        zerohigh_yprr = regress_to_player_base(row["yprr_0high"], base, routes)
-        blitz_yprr = regress_to_player_base(row.get("yprr_blitz", np.nan), base, routes)
-
-        # Convert to ratios
-        man_ratio = man_yprr / base
-        zone_ratio = zone_yprr / base
-        onehigh_ratio = onehigh_yprr / base
-        twohigh_ratio = twohigh_yprr / base
-        zerohigh_ratio = zerohigh_yprr / base
-        blitz_ratio = blitz_yprr / base
+        # Blitz fallback
+        blitz_ratio = row.get("yprr_blitz", np.nan)
+        if pd.isna(blitz_ratio):
+            blitz_ratio = base
+        blitz_ratio /= base
 
         # ------------------------
-        # Ratio clamping (NEW)
-        man_ratio = np.clip(man_ratio, MIN_RATIO, MAX_RATIO)
-        zone_ratio = np.clip(zone_ratio, MIN_RATIO, MAX_RATIO)
-        onehigh_ratio = np.clip(onehigh_ratio, MIN_RATIO, MAX_RATIO)
-        twohigh_ratio = np.clip(twohigh_ratio, MIN_RATIO, MAX_RATIO)
-        zerohigh_ratio = np.clip(zerohigh_ratio, MIN_RATIO, MAX_RATIO)
-        blitz_ratio = np.clip(blitz_ratio, MIN_RATIO, MAX_RATIO)
+        # Coverage & safety ratios
+        man_ratio = row["yprr_man"] / base
+        zone_ratio = row["yprr_zone"] / base
+        onehigh_ratio = row["yprr_1high"] / base
+        twohigh_ratio = row["yprr_2high"] / base
+        zerohigh_ratio = row["yprr_0high"] / base
 
         man_pct = defense["man_pct"]
         zone_pct = defense["zone_pct"]
@@ -166,36 +148,23 @@ def compute_model(
         zerohigh_pct = defense["zerohigh_pct"]
 
         # ------------------------
-        # System A
+        # System A: main team weighting
         coverage_component = man_pct * man_ratio + zone_pct * zone_ratio
         total_coverage = man_pct + zone_pct
-
-        safety_component = (
-            onehigh_pct * onehigh_ratio +
-            twohigh_pct * twohigh_ratio +
-            zerohigh_pct * zerohigh_ratio
-        )
+        safety_component = onehigh_pct * onehigh_ratio + twohigh_pct * twohigh_ratio + zerohigh_pct * zerohigh_ratio
         total_safety = onehigh_pct + twohigh_pct + zerohigh_pct
-
         if total_safety > 0:
             safety_component /= total_safety
 
         if total_coverage + total_safety > 0:
-            systemA_ratio = (
-                coverage_component * total_coverage +
-                safety_component * total_safety
-            ) / (total_coverage + total_safety)
+            systemA_ratio = (coverage_component * total_coverage + safety_component * total_safety) / (total_coverage + total_safety)
         else:
             systemA_ratio = (coverage_component + safety_component) / 2
 
         # ------------------------
-        # System B (Deviation)
+        # System B: league deviation weighting
         coverage_dev = abs(man_pct - league_avg_man) + abs(zone_pct - league_avg_zone)
-        safety_dev = (
-            abs(onehigh_pct - league_avg_1high) +
-            abs(twohigh_pct - league_avg_2high) +
-            abs(zerohigh_pct - league_avg_0high)
-        )
+        safety_dev = abs(onehigh_pct - league_avg_1high) + abs(twohigh_pct - league_avg_2high) + abs(zerohigh_pct - league_avg_0high)
 
         if coverage_dev + safety_dev > 0:
             coverage_weight_dev = coverage_dev / (coverage_dev + safety_dev)
@@ -204,40 +173,36 @@ def compute_model(
             coverage_weight_dev = 0.5
             safety_weight_dev = 0.5
 
-        systemB_ratio = (
-            coverage_component * coverage_weight_dev +
-            safety_component * safety_weight_dev
-        )
+        systemB_ratio = coverage_component * coverage_weight_dev + safety_component * safety_weight_dev
 
         # ------------------------
-        # Hybrid ratio
-        final_ratio = (
-            systemA_ratio * (1 - deviation_boost) +
-            systemB_ratio * deviation_boost
-        )
+        # Hybrid: final ratio with deviation boost
+        final_ratio = systemA_ratio * (1 - deviation_boost) + systemB_ratio * deviation_boost
 
         # ------------------------
-        # Adjusted YPRR & edge (NO EDGE CAP)
+        # Compute adjusted YPRR & edge
         adjusted_yprr = base * ((final_ratio + blitz_ratio) / 2)
         raw_edge = (adjusted_yprr - base) / base
+        raw_edge = np.clip(raw_edge, -0.25, 0.25)
         edge_score = (raw_edge / 0.25) * 100
 
         # ------------------------
-        # Route-share regression
-        route_share = row.get("route_share", 0)
+        # Route-share regression toward zero
+        route_share = row.get("route_share", np.nan)
+        if pd.isna(route_share):
+            route_share = 0
 
         if route_share >= start_penalty:
             penalty = 0
         elif route_share <= end_penalty:
             penalty = max_penalty
         else:
-            penalty = max_penalty * (
-                (start_penalty - route_share) /
-                (start_penalty - end_penalty)
-            ) ** exponent
+            penalty = max_penalty * ((start_penalty - route_share) / (start_penalty - end_penalty)) ** exponent
 
         edge_score *= (1 - penalty)
 
+        # ------------------------
+        # Store both system contributions for visualization
         results.append({
             "Player": row["player"],
             "Tm": row["team"],
@@ -254,6 +219,7 @@ def compute_model(
     if df.empty:
         return df
 
+    # Apply route-share filters
     if qualified_toggle_35:
         df = df[df["Route (%)"] >= 35]
     elif qualified_toggle_20:
@@ -261,5 +227,151 @@ def compute_model(
 
     df = df.reindex(df["Edge"].abs().sort_values(ascending=False).index)
     df["Rk"] = range(1, len(df) + 1)
+
     return df
+
+# ------------------------
+# Edge color function
+# ------------------------
+def color_edge(val):
+    if val > 20:
+        return "color: darkgreen; font-weight: bold; text-align: center"
+    elif 10 < val <= 20:
+        return "color: green; font-weight: bold; text-align: center"
+    elif 0 < val <= 10:
+        return "color: lightgreen; font-weight: bold; text-align: center"
+    elif -10 < val <= 0:
+        return "color: lightcoral; font-weight: bold; text-align: center"
+    elif -20 < val <= -10:
+        return "color: red; font-weight: bold; text-align: center"
+    else:
+        return "color: darkred; font-weight: bold; text-align: center"
+
+# ------------------------
+# Run Model
+# ------------------------
+results = compute_model(wr_df, def_df)
+if results.empty:
+    st.warning("No players available after filtering.")
+    st.stop()
+
+# ------------------------
+# Team Filter (Dropdown Style)
+# ------------------------
+st.sidebar.header("Team Filter")
+team_options = sorted(results["Tm"].dropna().unique())
+
+selected_teams = st.sidebar.multiselect(
+    "Type or select team(s) to display (leave empty for all)",
+    options=team_options
+)
+
+if selected_teams:
+    results = results[results["Tm"].isin(selected_teams)]
+
+# ------------------------
+# Display Tables
+# ------------------------
+display_cols = [
+    "Rk", "Player", "Tm", "Vs.", "Route (%)",
+    "Base YPRR", "Adj. YPRR", "Matchup (+/-)", "Deviation", "Edge"
+]
+
+number_format = {
+    "Edge": "{:.1f}",
+    "Matchup (+/-)": "{:.1f}",
+    "Deviation": "{:.1f}",
+    "Route (%)": "{:.1f}",
+    "Base YPRR": "{:.2f}",
+    "Adj. YPRR": "{:.2f}"
+}
+
+st.subheader("Player Rankings")
+st.dataframe(
+    results[display_cols]
+    .style
+    .applymap(color_edge, subset=["Edge"])
+    .format(number_format)
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col != 'Player'])
+)
+
+# ------------------------
+# Targets & Fades thresholds
+# ------------------------
+min_edge = 10
+min_routes = 30  # percentage
+
+st.subheader("Targets")
+st.markdown(f"*Showing players with Edge ≥ {min_edge} and Route Share ≥ {min_routes}%*")
+targets = results[
+    (results["Edge"] >= min_edge) &
+    (results["Route (%)"] >= min_routes)
+]
+
+st.dataframe(
+    targets[display_cols]
+    .style
+    .applymap(color_edge, subset=["Edge"])
+    .format(number_format)
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col != 'Player'])
+)
+
+st.subheader("Fades")
+st.markdown(f"*Showing players with Edge ≤ -{min_edge} and Route Share ≥ {min_routes}%*")
+fades = results[
+    (results["Edge"] <= -min_edge) &
+    (results["Route (%)"] >= min_routes)
+].sort_values("Edge")
+
+st.dataframe(
+    fades[display_cols]
+    .style
+    .applymap(color_edge, subset=["Edge"])
+    .format(number_format)
+    .set_properties(**{'text-align': 'center'}, subset=[col for col in display_cols if col != 'Player'])
+)
+
+# ------------------------
+# Deviation boost bar plot
+# ------------------------
+st.subheader("Deviation Boost Impact")
+st.markdown(
+    "Bar plot shows the contribution of Matchup (+/-) vs Deviation on each player's Edge."
+)
+
+if not results.empty:
+    plot_df = results.copy()
+    plot_df = plot_df.sort_values("Edge", ascending=False).head(30)  # top 30 players
+
+    plot_df_melt = plot_df.melt(
+        id_vars=["Player"],
+        value_vars=["Matchup (+/-)", "Deviation"],
+        var_name="Component",
+        value_name="Edge_Contribution"
+    )
+
+    chart = alt.Chart(plot_df_melt).mark_bar().encode(
+        x=alt.X('Player', sort=None),
+        y='Edge_Contribution',
+        color=alt.Color('Component', scale=alt.Scale(domain=["Matchup (+/-)","Deviation"], range=["#4caf50","#ff9800"])),
+        tooltip=['Player','Component','Edge_Contribution']
+    ).properties(width=800, height=400)
+
+    st.altair_chart(chart, use_container_width=True)
+
+# ------------------------
+# Column Descriptions
+# ------------------------
+st.subheader("Column Descriptions")
+st.markdown("""
+- **Rk**: Player's rank based on absolute Edge.
+- **Matchup (+/-)**: Projection based purely on the team's coverage and safety tendencies.
+- **Deviation**: Boost or detract based on how unique the team's defensive tendencies are relative to the league.
+- **Edge**: Final score after combining Matchup (+/-), Deviation, and route-share regression.
+- **Route (%)**: Percent of team routes run by the player.
+- **Base YPRR / Adj. YPRR**: Yards per route run, before and after matchup adjustments.
+- **Vs.**: Opponent team.
+- **Tm**: Player's team.
+""")
+
 
