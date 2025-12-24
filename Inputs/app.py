@@ -219,7 +219,9 @@ def compute_model(
         return df
 
     # Apply route-share filters
-    if qualified_toggle_35:
+    if qualified_toggle_50:
+        df = df[df["Route (%)"] >= 50]
+    elif qualified_toggle_35:
         df = df[df["Route (%)"] >= 35]
     elif qualified_toggle_20:
         df = df[df["Route (%)"] >= 20]
